@@ -1,30 +1,25 @@
 from __future__ import annotations
 
-import re
+import json
 
 from integrations.firecrawl import FirecrawlClient
+from integrations.llm import LLMRouter
 from models.analysis import PaperAnalysis
-from models.enums import AnalysisQuality
+from models.enums import AnalysisQuality, LLMRole
 from models.papers import CuratedPaper
 
 SECTION_HINTS = ("abstract", "introduction", "method", "approach", "results", "conclusion")
-METRIC_PATTERNS = {
-    "accuracy": r"\baccuracy\b",
-    "f1": r"\bf1(?:-score)?\b",
-    "precision": r"\bprecision\b",
-    "recall": r"\brecall\b",
-    "auroc": r"\bauroc\b|\broc-auc\b",
-    "bleu": r"\bbleu\b",
-    "rouge": r"\brouge\b",
-    "mse": r"\bmse\b|\bmean squared error\b",
-    "mae": r"\bmae\b|\bmean absolute error\b",
-    "perplexity": r"\bperplexity\b",
-}
 
 
 class AnalysisService:
-    def __init__(self, *, firecrawl_client: FirecrawlClient) -> None:
+    def __init__(
+        self,
+        *,
+        firecrawl_client: FirecrawlClient,
+        llm_router: LLMRouter,
+    ) -> None:
         self.firecrawl_client = firecrawl_client
+        self.llm_router = llm_router
 
     async def analyze_paper(self, paper: CuratedPaper) -> PaperAnalysis:
         full_text = None
@@ -33,24 +28,41 @@ class AnalysisService:
 
         quality = self._classify_quality(full_text)
         source_text = full_text if quality == AnalysisQuality.FULL_TEXT else self._fallback_text(paper)
+        truncated_text = self._truncate(source_text)
 
-        return PaperAnalysis(
-            paper_id=paper.paper_id,
-            analysis_quality=quality,
-            core_claim=self._extract_core_claim(source_text),
-            methodology=self._extract_methodology(source_text),
-            datasets=self._extract_named_entities(
-                source_text,
-                r"([A-Z][A-Za-z0-9+\-/]*(?:\s+[A-Z][A-Za-z0-9+\-/]*){0,3})\s+(?:dataset|datasets|corpus)",
+        analysis = await self.llm_router.generate_structured(
+            role=LLMRole.PAPER_ANALYZER,
+            system_prompt=(
+                "You are the Paper Analyzer Agent for an arXiv literature scout. "
+                "Read the provided paper content and extract a structured analysis. "
+                "Return JSON only. Use only the provided content. Do not invent details."
             ),
-            metrics=self._extract_metrics(source_text),
-            benchmarks=self._extract_named_entities(
-                source_text,
-                r"([A-Z][A-Za-z0-9+\-/]*(?:\s+[A-Z][A-Za-z0-9+\-/]*){0,3})\s+(?:benchmark|benchmarks)",
+            user_prompt=(
+                f"Paper metadata:\n{json.dumps(self._build_paper_metadata(paper), indent=2)}\n\n"
+                f"Analysis quality mode: {quality.value}\n\n"
+                "Paper content:\n"
+                f"{truncated_text}\n\n"
+                "Extraction rules:\n"
+                "- core_claim should be one concise sentence if identifiable\n"
+                "- methodology should contain 1 to 4 concise bullet-like statements as plain strings\n"
+                "- datasets, metrics, and benchmarks should contain only explicitly supported items\n"
+                "- limitations should contain explicit limitations or caveats when present\n"
+                "- explicit_citations should contain cited paper names, citation keys, or numbered references only if they are explicit in the text\n"
+                "- if a field is not supported by the content, return an empty list or null as appropriate"
             ),
-            limitations=self._extract_limitations(source_text),
-            explicit_citations=self._extract_citations(source_text),
+            schema_type=PaperAnalysis,
         )
+        analysis.paper_id = paper.paper_id
+        analysis.analysis_quality = quality
+        analysis.methodology = self._normalize_strings(analysis.methodology, limit=4)
+        analysis.datasets = self._normalize_strings(analysis.datasets)
+        analysis.metrics = self._normalize_strings(analysis.metrics)
+        analysis.benchmarks = self._normalize_strings(analysis.benchmarks)
+        analysis.limitations = self._normalize_strings(analysis.limitations, limit=4)
+        analysis.explicit_citations = self._normalize_strings(analysis.explicit_citations, limit=20)
+        if analysis.core_claim:
+            analysis.core_claim = " ".join(analysis.core_claim.split()).strip()
+        return analysis
 
     async def _fetch_full_text(self, arxiv_id: str) -> str | None:
         arxiv_url = f"https://arxiv.org/html/{arxiv_id}"
@@ -78,65 +90,36 @@ class AnalysisService:
         return " ".join(part for part in [paper.title, paper.abstract or ""] if part)
 
     @staticmethod
-    def _extract_core_claim(text: str) -> str | None:
-        sentences = AnalysisService._split_sentences(text)
-        for sentence in sentences:
-            lowered = sentence.lower()
-            if any(token in lowered for token in ("we propose", "we present", "this paper", "we introduce", "our method")):
-                return sentence
-        return sentences[0] if sentences else None
+    def _build_paper_metadata(paper: CuratedPaper) -> dict[str, object]:
+        return {
+            "paper_id": paper.paper_id,
+            "arxiv_id": paper.arxiv_id,
+            "title": paper.title,
+            "year": paper.year,
+            "citation_count": paper.citation_count,
+            "authors": [author.name for author in paper.authors],
+        }
 
     @staticmethod
-    def _extract_methodology(text: str) -> list[str]:
-        keywords = ("method", "approach", "model", "architecture", "framework", "pipeline", "algorithm")
-        selected: list[str] = []
-        for sentence in AnalysisService._split_sentences(text):
-            lowered = sentence.lower()
-            if any(keyword in lowered for keyword in keywords):
-                selected.append(sentence)
-            if len(selected) == 3:
-                break
-        return selected
-
-    @staticmethod
-    def _extract_metrics(text: str) -> list[str]:
-        lowered = text.lower()
-        return [name for name, pattern in METRIC_PATTERNS.items() if re.search(pattern, lowered)]
-
-    @staticmethod
-    def _extract_limitations(text: str) -> list[str]:
-        limitation_tokens = ("limitation", "however", "future work", "challenge", "restrict", "costly", "expensive")
-        selected: list[str] = []
-        for sentence in AnalysisService._split_sentences(text):
-            lowered = sentence.lower()
-            if any(token in lowered for token in limitation_tokens):
-                selected.append(sentence)
-            if len(selected) == 3:
-                break
-        return selected
-
-    @staticmethod
-    def _extract_citations(text: str) -> list[str]:
-        citations = re.findall(r"\[(\d{1,3})\]", text)
-        seen: list[str] = []
-        for citation in citations:
-            if citation not in seen:
-                seen.append(citation)
-        return seen[:20]
-
-    @staticmethod
-    def _extract_named_entities(text: str, pattern: str) -> list[str]:
-        matches: list[str] = []
-        for match in re.finditer(pattern, text):
-            value = " ".join(match.group(1).split())
-            if value not in matches:
-                matches.append(value)
-        return matches
-
-    @staticmethod
-    def _split_sentences(text: str) -> list[str]:
+    def _truncate(text: str, limit: int = 18000) -> str:
         normalized = " ".join(text.split())
-        if not normalized:
-            return []
-        sentences = re.split(r"(?<=[.!?])\s+", normalized)
-        return [sentence.strip() for sentence in sentences if sentence.strip()]
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[:limit].rstrip() + "..."
+
+    @staticmethod
+    def _normalize_strings(values: list[str], *, limit: int | None = None) -> list[str]:
+        seen: set[str] = set()
+        normalized_values: list[str] = []
+        for value in values:
+            cleaned = " ".join(value.split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_values.append(cleaned)
+            if limit is not None and len(normalized_values) >= limit:
+                break
+        return normalized_values

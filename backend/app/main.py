@@ -64,7 +64,10 @@ async def lifespan(app: FastAPI):
         gemini_client=gemini_client,
         max_retries=settings.llm_max_retries,
     )
-    analysis_service = AnalysisService(firecrawl_client=firecrawl_client)
+    analysis_service = AnalysisService(
+        firecrawl_client=firecrawl_client,
+        llm_router=llm_router,
+    )
     citation_graph_service = CitationGraphService(
         semantic_scholar_client=semantic_scholar_client,
     )
