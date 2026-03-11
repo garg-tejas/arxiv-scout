@@ -18,6 +18,7 @@ backend/data/*.db-*
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/*.tsbuildinfo
 
 # Environment
 .env

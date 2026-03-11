@@ -1,5 +1,17 @@
 export type SessionStatus = "idle" | "running" | "waiting_for_input" | "completed" | "error";
 export type PhaseType = "discovery" | "analysis" | "survey" | "none";
+export type AllowedAction =
+  | "confirm_topic"
+  | "update_approved_papers"
+  | "nudge_discovery"
+  | "start_analysis"
+  | "select_analysis_papers"
+  | "start_survey"
+  | "submit_survey_brief"
+  | "skip_survey_brief"
+  | "revise_survey_sections"
+  | "approve_final_survey"
+  | "download_survey_markdown";
 export type CheckpointType =
   | "topic_confirmation"
   | "shortlist_review"
@@ -7,11 +19,29 @@ export type CheckpointType =
   | "survey_brief"
   | "survey_review"
   | "none";
+export type StreamEventType =
+  | "phase_started"
+  | "node_update"
+  | "interrupt"
+  | "artifact_ready"
+  | "error"
+  | "phase_completed";
+export type ArtifactType =
+  | "search_interpretation"
+  | "shortlist"
+  | "preliminary_method_table"
+  | "paper_analysis"
+  | "citation_graph"
+  | "method_comparison_table"
+  | "survey_brief"
+  | "theme_clusters"
+  | "survey_section"
+  | "final_survey_markdown";
 
 export interface PendingInterrupt {
   checkpoint: CheckpointType;
   message: string;
-  expected_action_types: string[];
+  expected_action_types: AllowedAction[];
 }
 
 export interface SearchInterpretation {
@@ -125,7 +155,7 @@ export interface SessionSnapshot {
   current_phase: PhaseType;
   current_checkpoint: CheckpointType;
   pending_interrupt: PendingInterrupt | null;
-  allowed_actions: string[];
+  allowed_actions: AllowedAction[];
   topic: string | null;
   search_interpretation: SearchInterpretation | null;
   steering_preferences: SteeringPreferences;
@@ -146,7 +176,26 @@ export interface CreateSessionResponse {
   session_id: string;
 }
 
+export interface StreamEvent {
+  id: number | null;
+  session_id: string;
+  event_type: StreamEventType;
+  phase: PhaseType;
+  checkpoint: CheckpointType;
+  artifact_type: ArtifactType | null;
+  message: string | null;
+  data: Record<string, unknown>;
+  occurred_at: string;
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+async function parseSnapshot(response: Response): Promise<SessionSnapshot> {
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return response.json();
+}
 
 export async function createSession(): Promise<CreateSessionResponse> {
   const response = await fetch(`${API_BASE}/sessions`, {
@@ -164,4 +213,54 @@ export async function getSession(sessionId: string): Promise<SessionSnapshot> {
     throw new Error(`Failed to load session: ${response.status}`);
   }
   return response.json();
+}
+
+export async function startTopic(sessionId: string, topic: string): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/topic`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ topic }),
+  });
+  return parseSnapshot(response);
+}
+
+export async function confirmTopic(sessionId: string): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/discovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmed: true }),
+  });
+  return parseSnapshot(response);
+}
+
+export async function updateApprovedPapers(
+  sessionId: string,
+  paperIds: string[],
+): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/discovery/approved-papers`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ paper_ids: paperIds }),
+  });
+  return parseSnapshot(response);
+}
+
+export async function nudgeDiscovery(
+  sessionId: string,
+  text: string,
+): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/discovery/nudge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+  return parseSnapshot(response);
 }
