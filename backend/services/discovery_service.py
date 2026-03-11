@@ -1,60 +1,15 @@
 from __future__ import annotations
 
-import re
-from collections import OrderedDict
+import json
 
+from graph.discovery import interpret_topic
 from integrations.arxiv import ArxivClient
+from integrations.llm import LLMRouter
 from integrations.semantic_scholar import SemanticScholarClient
-from models.discovery import SteeringPreferences
+from models.discovery import CurationBatchResult, SteeringPreferences
+from models.enums import LLMRole
 from models.papers import Author, CuratedPaper, MethodExtractionRow, PaperMetadata
 from models.session import SearchInterpretation
-
-STOPWORDS = {
-    "the",
-    "and",
-    "for",
-    "with",
-    "from",
-    "that",
-    "this",
-    "using",
-    "into",
-    "over",
-    "under",
-    "based",
-    "through",
-    "study",
-    "paper",
-    "method",
-    "methods",
-}
-
-METRIC_PATTERNS = OrderedDict(
-    [
-        ("accuracy", r"\baccuracy\b"),
-        ("f1", r"\bf1(?:-score)?\b"),
-        ("precision", r"\bprecision\b"),
-        ("recall", r"\brecall\b"),
-        ("auroc", r"\bauroc\b|\baoc\b|\broc-auc\b"),
-        ("bleu", r"\bbleu\b"),
-        ("rouge", r"\brouge\b"),
-        ("mse", r"\bmse\b|\bmean squared error\b"),
-        ("mae", r"\bmae\b|\bmean absolute error\b"),
-        ("perplexity", r"\bperplexity\b"),
-    ]
-)
-
-MODEL_KEYWORDS = OrderedDict(
-    [
-        ("graph neural network", [r"\bgraph neural network\b", r"\bgnn\b", r"\bgcn\b", r"\bgat\b"]),
-        ("transformer", [r"\btransformer\b", r"\bself-attention\b"]),
-        ("diffusion model", [r"\bdiffusion\b"]),
-        ("large language model", [r"\bllm\b", r"\blarge language model\b"]),
-        ("convolutional network", [r"\bcnn\b", r"\bconvolutional\b"]),
-        ("recurrent network", [r"\brnn\b", r"\blstm\b", r"\bgru\b"]),
-        ("retrieval model", [r"\bretriev(?:al|er)\b"]),
-    ]
-)
 
 
 class DiscoveryService:
@@ -63,13 +18,54 @@ class DiscoveryService:
         *,
         semantic_scholar_client: SemanticScholarClient,
         arxiv_client: ArxivClient,
+        llm_router: LLMRouter,
         results_per_angle: int,
         shortlist_size: int,
     ) -> None:
         self.semantic_scholar_client = semantic_scholar_client
         self.arxiv_client = arxiv_client
+        self.llm_router = llm_router
         self.results_per_angle = results_per_angle
         self.shortlist_size = shortlist_size
+
+    async def interpret_topic(self, topic: str) -> SearchInterpretation:
+        return await interpret_topic(topic, self.llm_router)
+
+    async def merge_steering_preferences(
+        self,
+        *,
+        current: SteeringPreferences,
+        nudge_text: str,
+    ) -> SteeringPreferences:
+        normalized_nudge = " ".join(nudge_text.split()).strip()
+        if not normalized_nudge:
+            raise ValueError("Nudge text cannot be empty.")
+
+        merged = await self.llm_router.generate_structured(
+            role=LLMRole.STEERING,
+            system_prompt=(
+                "You are the Steering Agent for an arXiv literature scout. "
+                "Update the user's discovery preferences using the latest nudge and the existing preference state. "
+                "Return JSON only."
+            ),
+            user_prompt=(
+                "Current steering preferences:\n"
+                f"{json.dumps(current.model_dump(mode='json'), indent=2)}\n\n"
+                "Latest user nudge:\n"
+                f"{normalized_nudge}\n\n"
+                "Rules:\n"
+                "- return the full merged preference state\n"
+                "- include contains positive hard constraints or things to include\n"
+                "- exclude contains things to avoid or skip\n"
+                "- emphasize contains soft-focus or prioritization signals\n"
+                "- keep entries as short normalized phrases\n"
+                "- deduplicate entries\n"
+                "- if the latest nudge makes a phrase clearly negative, keep it only in exclude\n"
+                "- if the latest nudge makes a phrase clearly positive, keep it only in include or emphasize"
+            ),
+            schema_type=SteeringPreferences,
+        )
+        return self._normalize_preferences(merged)
 
     async def build_shortlist(
         self,
@@ -86,14 +82,19 @@ class DiscoveryService:
             )
 
         enriched_candidates = await self._enrich_and_filter(raw_candidates)
-        curated = self._curate(
+        if not enriched_candidates:
+            return [], []
+
+        curated, method_table = await self._curate(
             topic=topic,
+            interpretation=interpretation,
             papers=enriched_candidates,
             steering_preferences=preferences,
         )
         shortlist = curated[: self.shortlist_size]
-        method_table = [self._extract_method_row(paper) for paper in shortlist]
-        return shortlist, method_table
+        row_by_id = {row.paper_id: row for row in method_table}
+        ordered_rows = [row_by_id[paper.paper_id] for paper in shortlist if paper.paper_id in row_by_id]
+        return shortlist, ordered_rows
 
     async def _enrich_and_filter(self, raw_candidates: list[dict]) -> list[PaperMetadata]:
         deduped: dict[str, PaperMetadata] = {}
@@ -133,61 +134,119 @@ class DiscoveryService:
             paper.year = enriched.get("year") or paper.year
         return paper
 
-    def _curate(
+    async def _curate(
         self,
         *,
         topic: str,
+        interpretation: SearchInterpretation,
         papers: list[PaperMetadata],
         steering_preferences: SteeringPreferences,
-    ) -> list[CuratedPaper]:
+    ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
+        prompt_payload = {
+            "topic": topic,
+            "normalized_topic": interpretation.normalized_topic,
+            "search_angles": interpretation.search_angles,
+            "steering_preferences": steering_preferences.model_dump(mode="json"),
+            "shortlist_size": self.shortlist_size,
+            "candidate_papers": [
+                {
+                    "paper_id": paper.paper_id,
+                    "title": paper.title,
+                    "abstract": self._truncate(paper.abstract),
+                    "year": paper.year,
+                    "citation_count": paper.citation_count,
+                    "authors": [author.name for author in paper.authors[:8]],
+                }
+                for paper in papers
+            ],
+        }
+        batch = await self.llm_router.generate_structured(
+            role=LLMRole.CURATION,
+            system_prompt=(
+                "You are the Curation Agent for an arXiv literature scout. "
+                "Given a topic, steering preferences, and a batch of arXiv paper candidates, "
+                "return the most relevant shortlist in one batch. Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(prompt_payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- select at most shortlist_size papers\n"
+                "- use only the provided paper_id values\n"
+                "- exclude obvious mismatches\n"
+                "- assign score between 0.0 and 1.0\n"
+                "- rationale should be one concise sentence\n"
+                "- infer model_type, dataset, metrics, and benchmarks from title/abstract only\n"
+                "- prioritize relevance to the original topic and steering preferences over raw citation count\n"
+                "- treat this as one batched shortlist decision, not independent per-paper reviews"
+            ),
+            schema_type=CurationBatchResult,
+        )
+        return self._finalize_curated_shortlist(
+            papers=papers,
+            batch=batch,
+        )
+
+    @staticmethod
+    def _normalize_preferences(preferences: SteeringPreferences) -> SteeringPreferences:
+        def normalize_values(values: list[str]) -> list[str]:
+            seen: set[str] = set()
+            normalized_values: list[str] = []
+            for value in values:
+                cleaned = " ".join(value.split()).strip().lower()
+                if not cleaned or cleaned in seen:
+                    continue
+                seen.add(cleaned)
+                normalized_values.append(cleaned)
+            return normalized_values
+
+        include = normalize_values(preferences.include)
+        exclude = normalize_values(preferences.exclude)
+        emphasize = normalize_values(preferences.emphasize)
+
+        exclude_set = set(exclude)
+        include = [value for value in include if value not in exclude_set]
+        emphasize = [value for value in emphasize if value not in exclude_set]
+        return SteeringPreferences(
+            include=include,
+            exclude=exclude,
+            emphasize=emphasize,
+        )
+
+    def _finalize_curated_shortlist(
+        self,
+        *,
+        papers: list[PaperMetadata],
+        batch: CurationBatchResult,
+    ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
+        paper_map = {paper.paper_id: paper for paper in papers}
         curated: list[CuratedPaper] = []
-        topic_terms = set(self._tokenize(topic))
-        for paper in papers:
-            combined_text = f"{paper.title} {paper.abstract or ''}"
-            title_terms = set(self._tokenize(paper.title))
-            abstract_terms = set(self._tokenize(paper.abstract or ""))
-            title_overlap = topic_terms & title_terms
-            abstract_overlap = topic_terms & abstract_terms
-            include_matches = self._count_phrase_matches(
-                combined_text,
-                steering_preferences.include,
-            )
-            emphasize_matches = self._count_phrase_matches(
-                combined_text,
-                steering_preferences.emphasize,
-            )
-            exclude_matches = self._count_phrase_matches(
-                combined_text,
-                steering_preferences.exclude,
-            )
+        method_rows: list[MethodExtractionRow] = []
+        seen: set[str] = set()
 
-            score = (
-                0.7 * (len(title_overlap) / max(1, len(topic_terms)))
-                + 0.3 * (len(abstract_overlap) / max(1, len(topic_terms)))
-            )
-            score += 0.08 * include_matches
-            score += 0.12 * emphasize_matches
-            score -= 0.35 * exclude_matches
-            if paper.citation_count:
-                score += min(paper.citation_count / 1000, 0.1)
-
-            if exclude_matches > 0 and include_matches == 0 and emphasize_matches == 0:
+        for candidate in batch.shortlisted_papers:
+            if candidate.paper_id in seen:
                 continue
-
-            rationale = self._build_rationale(
-                title_overlap=title_overlap,
-                abstract_overlap=abstract_overlap,
-                steering_preferences=steering_preferences,
-                include_matches=include_matches,
-                emphasize_matches=emphasize_matches,
-            )
+            paper = paper_map.get(candidate.paper_id)
+            if paper is None:
+                continue
+            seen.add(candidate.paper_id)
             curated.append(
                 CuratedPaper(
                     **paper.model_dump(),
-                    score=round(score, 4),
-                    rationale=rationale,
+                    score=round(candidate.score, 4),
+                    rationale=candidate.rationale.strip(),
                 )
             )
+            method_rows.append(
+                MethodExtractionRow(
+                    paper_id=candidate.paper_id,
+                    model_type=candidate.model_type,
+                    dataset=candidate.dataset,
+                    metrics=self._normalize_strings(candidate.metrics),
+                    benchmarks=self._normalize_strings(candidate.benchmarks),
+                )
+            )
+
         curated.sort(
             key=lambda paper: (
                 paper.score or 0.0,
@@ -196,73 +255,10 @@ class DiscoveryService:
             ),
             reverse=True,
         )
-        return curated
-
-    def _build_rationale(
-        self,
-        *,
-        title_overlap: set[str],
-        abstract_overlap: set[str],
-        steering_preferences: SteeringPreferences,
-        include_matches: int,
-        emphasize_matches: int,
-    ) -> str:
-        matched_terms = sorted(title_overlap | abstract_overlap)
-        steering_notes: list[str] = []
-        if include_matches:
-            steering_notes.append("matches include preferences")
-        if emphasize_matches:
-            steering_notes.append("aligns with emphasized terms")
-
-        if matched_terms:
-            preview = ", ".join(matched_terms[:3])
-            base = f"Matches key topic terms in the title/abstract: {preview}."
-            if steering_notes:
-                return f"{base} It also {' and '.join(steering_notes)}."
-            return base
-        if title_overlap:
-            return "Matches the interpreted topic strongly in the title."
-        if steering_notes:
-            return f"Retained because it {' and '.join(steering_notes)}."
-        return "Retrieved from the interpreted search angles and retained after arXiv filtering."
-
-    def _extract_method_row(self, paper: CuratedPaper) -> MethodExtractionRow:
-        text = f"{paper.title} {paper.abstract or ''}"
-        lower_text = text.lower()
-
-        model_type = None
-        for label, patterns in MODEL_KEYWORDS.items():
-            if any(re.search(pattern, lower_text) for pattern in patterns):
-                model_type = label
-                break
-
-        metrics = [name for name, pattern in METRIC_PATTERNS.items() if re.search(pattern, lower_text)]
-        datasets = self._extract_named_entities(
-            text,
-            r"([A-Z][A-Za-z0-9+\-/]*(?:\s+[A-Z][A-Za-z0-9+\-/]*){0,3})\s+(?:dataset|datasets|corpus)",
-        )
-        benchmarks = self._extract_named_entities(
-            text,
-            r"([A-Z][A-Za-z0-9+\-/]*(?:\s+[A-Z][A-Za-z0-9+\-/]*){0,3})\s+(?:benchmark|benchmarks)",
-        )
-
-        dataset = datasets[0] if datasets else None
-        return MethodExtractionRow(
-            paper_id=paper.paper_id,
-            model_type=model_type,
-            dataset=dataset,
-            metrics=metrics,
-            benchmarks=benchmarks,
-        )
-
-    @staticmethod
-    def _extract_named_entities(text: str, pattern: str) -> list[str]:
-        seen: list[str] = []
-        for match in re.finditer(pattern, text):
-            value = " ".join(match.group(1).split())
-            if value not in seen:
-                seen.append(value)
-        return seen
+        shortlisted_papers = curated[: self.shortlist_size]
+        shortlisted_ids = {paper.paper_id for paper in shortlisted_papers}
+        shortlisted_rows = [row for row in method_rows if row.paper_id in shortlisted_ids]
+        return shortlisted_papers, shortlisted_rows
 
     @staticmethod
     def _extract_arxiv_id(candidate: dict) -> str | None:
@@ -272,20 +268,13 @@ class DiscoveryService:
             return arxiv_id.strip()
 
         url = candidate.get("url") or ""
-        match = re.search(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", url)
-        if match:
-            return match.group(1).replace(".pdf", "")
+        if "arxiv.org/" not in url:
+            return None
+        suffix = url.split("arxiv.org/", maxsplit=1)[1]
+        if suffix.startswith("abs/") or suffix.startswith("pdf/"):
+            paper_ref = suffix.split("/", maxsplit=1)[1]
+            return paper_ref.split("?", maxsplit=1)[0].replace(".pdf", "")
         return None
-
-    @staticmethod
-    def _tokenize(text: str) -> list[str]:
-        tokens = re.findall(r"[a-z0-9]+", text.lower())
-        return [token for token in tokens if len(token) > 2 and token not in STOPWORDS]
-
-    @staticmethod
-    def _count_phrase_matches(text: str, phrases: list[str]) -> int:
-        lower_text = text.lower()
-        return sum(1 for phrase in phrases if phrase and phrase.lower() in lower_text)
 
     @staticmethod
     def _build_queries(
@@ -300,9 +289,10 @@ class DiscoveryService:
             if not normalized:
                 return
             key = normalized.lower()
-            if key not in seen:
-                seen.add(key)
-                queries.append(normalized)
+            if key in seen:
+                return
+            seen.add(key)
+            queries.append(normalized)
 
         for angle in interpretation.search_angles:
             add_query(angle)
@@ -313,3 +303,27 @@ class DiscoveryService:
         for phrase in preferences.include[:2]:
             add_query(f"{base_topic} {phrase}")
         return queries
+
+    @staticmethod
+    def _truncate(text: str | None, limit: int = 900) -> str | None:
+        if text is None:
+            return None
+        normalized = " ".join(text.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[:limit].rstrip() + "..."
+
+    @staticmethod
+    def _normalize_strings(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        normalized_values: list[str] = []
+        for value in values:
+            cleaned = " ".join(value.split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_values.append(cleaned)
+        return normalized_values

@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
     discovery_service = DiscoveryService(
         semantic_scholar_client=semantic_scholar_client,
         arxiv_client=arxiv_client,
+        llm_router=llm_router,
         results_per_angle=settings.discovery_results_per_angle,
         shortlist_size=settings.discovery_shortlist_size,
     )
