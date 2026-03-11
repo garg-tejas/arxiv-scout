@@ -19,6 +19,12 @@ export interface SearchInterpretation {
   search_angles: string[];
 }
 
+export interface SteeringPreferences {
+  include: string[];
+  exclude: string[];
+  emphasize: string[];
+}
+
 export interface Author {
   name: string;
 }
@@ -62,6 +68,7 @@ export interface SessionSnapshot {
   allowed_actions: string[];
   topic: string | null;
   search_interpretation: SearchInterpretation | null;
+  steering_preferences: SteeringPreferences;
   approved_papers: string[];
   latest_shortlist: CuratedPaper[];
   preliminary_method_table: MethodExtractionRow[];

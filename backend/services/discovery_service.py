@@ -5,6 +5,7 @@ from collections import OrderedDict
 
 from integrations.arxiv import ArxivClient
 from integrations.semantic_scholar import SemanticScholarClient
+from models.discovery import SteeringPreferences
 from models.papers import Author, CuratedPaper, MethodExtractionRow, PaperMetadata
 from models.session import SearchInterpretation
 
@@ -75,15 +76,21 @@ class DiscoveryService:
         *,
         topic: str,
         interpretation: SearchInterpretation,
+        steering_preferences: SteeringPreferences | None = None,
     ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
+        preferences = steering_preferences or SteeringPreferences()
         raw_candidates: list[dict] = []
-        for angle in interpretation.search_angles:
+        for angle in self._build_queries(interpretation, preferences):
             raw_candidates.extend(
                 await self.semantic_scholar_client.search(angle, limit=self.results_per_angle)
             )
 
         enriched_candidates = await self._enrich_and_filter(raw_candidates)
-        curated = self._curate(topic=topic, papers=enriched_candidates)
+        curated = self._curate(
+            topic=topic,
+            papers=enriched_candidates,
+            steering_preferences=preferences,
+        )
         shortlist = curated[: self.shortlist_size]
         method_table = [self._extract_method_row(paper) for paper in shortlist]
         return shortlist, method_table
@@ -126,23 +133,54 @@ class DiscoveryService:
             paper.year = enriched.get("year") or paper.year
         return paper
 
-    def _curate(self, *, topic: str, papers: list[PaperMetadata]) -> list[CuratedPaper]:
+    def _curate(
+        self,
+        *,
+        topic: str,
+        papers: list[PaperMetadata],
+        steering_preferences: SteeringPreferences,
+    ) -> list[CuratedPaper]:
         curated: list[CuratedPaper] = []
         topic_terms = set(self._tokenize(topic))
         for paper in papers:
+            combined_text = f"{paper.title} {paper.abstract or ''}"
             title_terms = set(self._tokenize(paper.title))
             abstract_terms = set(self._tokenize(paper.abstract or ""))
             title_overlap = topic_terms & title_terms
             abstract_overlap = topic_terms & abstract_terms
+            include_matches = self._count_phrase_matches(
+                combined_text,
+                steering_preferences.include,
+            )
+            emphasize_matches = self._count_phrase_matches(
+                combined_text,
+                steering_preferences.emphasize,
+            )
+            exclude_matches = self._count_phrase_matches(
+                combined_text,
+                steering_preferences.exclude,
+            )
 
             score = (
                 0.7 * (len(title_overlap) / max(1, len(topic_terms)))
                 + 0.3 * (len(abstract_overlap) / max(1, len(topic_terms)))
             )
+            score += 0.08 * include_matches
+            score += 0.12 * emphasize_matches
+            score -= 0.35 * exclude_matches
             if paper.citation_count:
                 score += min(paper.citation_count / 1000, 0.1)
 
-            rationale = self._build_rationale(title_overlap, abstract_overlap)
+            if exclude_matches > 0 and include_matches == 0 and emphasize_matches == 0:
+                continue
+
+            rationale = self._build_rationale(
+                title_overlap=title_overlap,
+                abstract_overlap=abstract_overlap,
+                steering_preferences=steering_preferences,
+                include_matches=include_matches,
+                emphasize_matches=emphasize_matches,
+            )
             curated.append(
                 CuratedPaper(
                     **paper.model_dump(),
@@ -160,13 +198,32 @@ class DiscoveryService:
         )
         return curated
 
-    def _build_rationale(self, title_overlap: set[str], abstract_overlap: set[str]) -> str:
+    def _build_rationale(
+        self,
+        *,
+        title_overlap: set[str],
+        abstract_overlap: set[str],
+        steering_preferences: SteeringPreferences,
+        include_matches: int,
+        emphasize_matches: int,
+    ) -> str:
         matched_terms = sorted(title_overlap | abstract_overlap)
+        steering_notes: list[str] = []
+        if include_matches:
+            steering_notes.append("matches include preferences")
+        if emphasize_matches:
+            steering_notes.append("aligns with emphasized terms")
+
         if matched_terms:
             preview = ", ".join(matched_terms[:3])
-            return f"Matches key topic terms in the title/abstract: {preview}."
+            base = f"Matches key topic terms in the title/abstract: {preview}."
+            if steering_notes:
+                return f"{base} It also {' and '.join(steering_notes)}."
+            return base
         if title_overlap:
             return "Matches the interpreted topic strongly in the title."
+        if steering_notes:
+            return f"Retained because it {' and '.join(steering_notes)}."
         return "Retrieved from the interpreted search angles and retained after arXiv filtering."
 
     def _extract_method_row(self, paper: CuratedPaper) -> MethodExtractionRow:
@@ -224,3 +281,35 @@ class DiscoveryService:
     def _tokenize(text: str) -> list[str]:
         tokens = re.findall(r"[a-z0-9]+", text.lower())
         return [token for token in tokens if len(token) > 2 and token not in STOPWORDS]
+
+    @staticmethod
+    def _count_phrase_matches(text: str, phrases: list[str]) -> int:
+        lower_text = text.lower()
+        return sum(1 for phrase in phrases if phrase and phrase.lower() in lower_text)
+
+    @staticmethod
+    def _build_queries(
+        interpretation: SearchInterpretation,
+        preferences: SteeringPreferences,
+    ) -> list[str]:
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        def add_query(value: str) -> None:
+            normalized = " ".join(value.split()).strip()
+            if not normalized:
+                return
+            key = normalized.lower()
+            if key not in seen:
+                seen.add(key)
+                queries.append(normalized)
+
+        for angle in interpretation.search_angles:
+            add_query(angle)
+
+        base_topic = interpretation.normalized_topic or ""
+        for phrase in preferences.emphasize[:2]:
+            add_query(f"{base_topic} {phrase}")
+        for phrase in preferences.include[:2]:
+            add_query(f"{base_topic} {phrase}")
+        return queries

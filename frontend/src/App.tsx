@@ -13,6 +13,11 @@ const placeholderSnapshot: SessionSnapshot = {
   allowed_actions: [],
   topic: null,
   search_interpretation: null,
+  steering_preferences: {
+    include: [],
+    exclude: [],
+    emphasize: [],
+  },
   approved_papers: [],
   latest_shortlist: [],
   preliminary_method_table: [],

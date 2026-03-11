@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import ServiceContainer, get_services
-from models.discovery import ConfirmTopicRequest, StartTopicRequest
+from models.discovery import (
+    ConfirmTopicRequest,
+    DiscoveryNudgeRequest,
+    StartTopicRequest,
+    UpdateApprovedPapersRequest,
+)
 from models.events import CreateSessionResponse
 from models.session import SessionSnapshot
 from services.session_service import SessionExecutionError, SessionTransitionError
@@ -101,6 +106,46 @@ async def confirm_topic_interpretation(
 
     try:
         snapshot = await services.session_service.confirm_topic_interpretation(session_id)
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SessionExecutionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.put("/sessions/{session_id}/discovery/approved-papers", response_model=SessionSnapshot)
+async def update_approved_papers(
+    session_id: str,
+    payload: UpdateApprovedPapersRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.update_approved_papers(
+            session_id,
+            payload.paper_ids,
+        )
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.post("/sessions/{session_id}/discovery/nudge", response_model=SessionSnapshot)
+async def discovery_nudge(
+    session_id: str,
+    payload: DiscoveryNudgeRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.apply_discovery_nudge(
+            session_id,
+            payload.text,
+        )
     except SessionTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SessionExecutionError as exc:
