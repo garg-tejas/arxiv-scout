@@ -16,6 +16,8 @@ export function AnalysisView({ snapshot }: AnalysisViewProps) {
       <ul>
         <li>Selected papers: {snapshot.analysis_summary.selected_paper_ids.length}</li>
         <li>Completed: {String(snapshot.analysis_summary.completed)}</li>
+        <li>Comparison rows: {snapshot.analysis_summary.comparison_row_count}</li>
+        <li>Context nodes: {snapshot.analysis_summary.retained_context_node_count}</li>
       </ul>
     </article>
   );

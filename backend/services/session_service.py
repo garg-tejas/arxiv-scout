@@ -121,6 +121,7 @@ class SessionService:
         snapshot.latest_shortlist = []
         snapshot.preliminary_method_table = []
         snapshot.paper_analyses = []
+        snapshot.method_comparison_table = []
         snapshot.citation_graph = None
         snapshot.analysis_summary = AnalysisSummary()
         snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.PENDING
@@ -128,6 +129,7 @@ class SessionService:
         snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = start_time
         await self._persist_snapshot(snapshot)
 
@@ -293,6 +295,10 @@ class SessionService:
             snapshot.analysis_summary.selected_paper_ids = []
             snapshot.analysis_summary.completed = False
             snapshot.analysis_summary.degraded_paper_ids = []
+            snapshot.analysis_summary.comparison_row_count = 0
+            snapshot.analysis_summary.retained_context_node_count = 0
+            snapshot.analysis_summary.lineage_path_count = 0
+            snapshot.analysis_summary.citation_graph_summary = None
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.checkpoints.save(
@@ -346,10 +352,16 @@ class SessionService:
         snapshot.analysis_summary.selected_paper_ids = selected_ids
         snapshot.analysis_summary.completed = False
         snapshot.analysis_summary.degraded_paper_ids = []
+        snapshot.analysis_summary.comparison_row_count = 0
+        snapshot.analysis_summary.retained_context_node_count = 0
+        snapshot.analysis_summary.lineage_path_count = 0
+        snapshot.analysis_summary.citation_graph_summary = None
         snapshot.paper_analyses = []
+        snapshot.method_comparison_table = []
         snapshot.citation_graph = None
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -387,8 +399,13 @@ class SessionService:
             snapshot.pending_interrupt = None
             snapshot.allowed_actions = []
             snapshot.analysis_summary.completed = False
+            snapshot.analysis_summary.comparison_row_count = 0
+            snapshot.analysis_summary.retained_context_node_count = 0
+            snapshot.analysis_summary.lineage_path_count = 0
+            snapshot.analysis_summary.citation_graph_summary = None
             snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.FAILED
             snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.FAILED
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -415,8 +432,13 @@ class SessionService:
             snapshot.allowed_actions = []
             snapshot.analysis_summary.completed = False
             snapshot.analysis_summary.degraded_paper_ids = degraded_ids
+            snapshot.analysis_summary.comparison_row_count = 0
+            snapshot.analysis_summary.retained_context_node_count = 0
+            snapshot.analysis_summary.lineage_path_count = 0
+            snapshot.analysis_summary.citation_graph_summary = None
             snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
             snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.FAILED
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -430,7 +452,12 @@ class SessionService:
             )
             raise SessionExecutionError("Citation graph construction failed.") from exc
 
+        method_comparison_table = self.artifact_service.build_method_comparison_table(
+            papers=selected_papers,
+            analyses=analyses,
+        )
         snapshot.paper_analyses = analyses
+        snapshot.method_comparison_table = method_comparison_table
         snapshot.citation_graph = citation_graph
         snapshot.status = SessionStatus.IDLE
         snapshot.current_phase = PhaseType.ANALYSIS
@@ -440,8 +467,13 @@ class SessionService:
         snapshot.analysis_summary.selected_paper_ids = selected_ids
         snapshot.analysis_summary.completed = True
         snapshot.analysis_summary.degraded_paper_ids = degraded_ids
+        snapshot.analysis_summary.comparison_row_count = len(method_comparison_table)
+        snapshot.analysis_summary.retained_context_node_count = len(citation_graph.context_nodes)
+        snapshot.analysis_summary.lineage_path_count = len(citation_graph.lineage_paths)
+        snapshot.analysis_summary.citation_graph_summary = citation_graph.narrative_summary
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
         snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.READY
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.checkpoints.save(
@@ -464,12 +496,25 @@ class SessionService:
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.ANALYSIS,
+                artifact_type=ArtifactType.METHOD_COMPARISON_TABLE,
+                message="Method comparison table is ready.",
+                data={"rows": [row.model_dump(mode="json") for row in method_comparison_table]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
                 event_type=StreamEventType.PHASE_COMPLETED,
                 phase=PhaseType.ANALYSIS,
                 message="Per-paper analysis completed.",
                 data={
                     "selected_paper_ids": selected_ids,
                     "degraded_paper_ids": degraded_ids,
+                    "comparison_row_count": len(method_comparison_table),
+                    "retained_context_node_count": len(citation_graph.context_nodes),
+                    "lineage_path_count": len(citation_graph.lineage_paths),
                     "citation_graph_summary": citation_graph.narrative_summary,
                 },
             )

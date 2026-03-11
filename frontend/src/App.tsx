@@ -23,11 +23,16 @@ const placeholderSnapshot: SessionSnapshot = {
   latest_shortlist: [],
   preliminary_method_table: [],
   paper_analyses: [],
+  method_comparison_table: [],
   citation_graph: null,
   analysis_summary: {
     selected_paper_ids: [],
     completed: false,
     degraded_paper_ids: [],
+    comparison_row_count: 0,
+    retained_context_node_count: 0,
+    lineage_path_count: 0,
+    citation_graph_summary: null,
   },
   survey_summary: {
     section_ids: [],

@@ -61,6 +61,19 @@ export interface PaperAnalysis {
   explicit_citations: string[];
 }
 
+export interface MethodComparisonRow {
+  paper_id: string;
+  title: string;
+  analysis_quality: "full_text" | "abstract_only";
+  model_type: string | null;
+  core_claim: string | null;
+  methodology_summary: string | null;
+  datasets: string[];
+  metrics: string[];
+  benchmarks: string[];
+  primary_limitation: string | null;
+}
+
 export interface CitationNode {
   node_id: string;
   title: string;
@@ -95,6 +108,10 @@ export interface AnalysisSummary {
   selected_paper_ids: string[];
   completed: boolean;
   degraded_paper_ids: string[];
+  comparison_row_count: number;
+  retained_context_node_count: number;
+  lineage_path_count: number;
+  citation_graph_summary: string | null;
 }
 
 export interface SurveySummary {
@@ -117,6 +134,7 @@ export interface SessionSnapshot {
   latest_shortlist: CuratedPaper[];
   preliminary_method_table: MethodExtractionRow[];
   paper_analyses: PaperAnalysis[];
+  method_comparison_table: MethodComparisonRow[];
   citation_graph: CitationGraph | null;
   analysis_summary: AnalysisSummary;
   survey_summary: SurveySummary;
