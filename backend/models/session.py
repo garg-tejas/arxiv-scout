@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from models.analysis import AnalysisSummary
 from models.enums import AllowedAction, ArtifactStatusValue, CheckpointType, PhaseType, SessionStatus
+from models.papers import CuratedPaper, MethodExtractionRow
 from models.survey import SurveySummary
 
 
@@ -34,7 +35,8 @@ class SessionSnapshot(BaseModel):
     topic: str | None = None
     search_interpretation: SearchInterpretation | None = None
     approved_papers: list[str] = Field(default_factory=list)
-    latest_shortlist: list[str] = Field(default_factory=list)
+    latest_shortlist: list[CuratedPaper] = Field(default_factory=list)
+    preliminary_method_table: list[MethodExtractionRow] = Field(default_factory=list)
     analysis_summary: AnalysisSummary = Field(default_factory=AnalysisSummary)
     survey_summary: SurveySummary = Field(default_factory=SurveySummary)
     artifact_status: dict[str, ArtifactStatusValue] = Field(default_factory=dict)

@@ -8,10 +8,13 @@ from app.config import get_settings
 from app.dependencies import ServiceContainer
 from app.routes import sessions
 from graph.supervisor import build_supervisor_graph
+from integrations.arxiv import ArxivClient
+from integrations.semantic_scholar import SemanticScholarClient
 from persistence.cleanup import cleanup_expired_sessions
 from persistence.database import DatabaseManager
 from persistence.session_store import SessionStore
 from services.artifact_service import ArtifactService
+from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.session_service import SessionService
 from services.stream_service import StreamService
@@ -29,6 +32,17 @@ async def lifespan(app: FastAPI):
 
     artifact_service = ArtifactService()
     revision_service = RevisionService()
+    semantic_scholar_client = SemanticScholarClient(
+        base_url=settings.semantic_scholar_base_url,
+        api_key=settings.semantic_scholar_api_key,
+    )
+    arxiv_client = ArxivClient(api_url=settings.arxiv_api_url)
+    discovery_service = DiscoveryService(
+        semantic_scholar_client=semantic_scholar_client,
+        arxiv_client=arxiv_client,
+        results_per_angle=settings.discovery_results_per_angle,
+        shortlist_size=settings.discovery_shortlist_size,
+    )
     stream_service = StreamService(
         session_store=session_store,
         heartbeat_seconds=settings.sse_heartbeat_seconds,
@@ -36,6 +50,7 @@ async def lifespan(app: FastAPI):
     session_service = SessionService(
         session_store=session_store,
         artifact_service=artifact_service,
+        discovery_service=discovery_service,
         stream_service=stream_service,
         ttl_days=settings.session_ttl_days,
     )
@@ -44,8 +59,11 @@ async def lifespan(app: FastAPI):
         settings=settings,
         database=database,
         session_store=session_store,
+        semantic_scholar_client=semantic_scholar_client,
+        arxiv_client=arxiv_client,
         stream_service=stream_service,
         artifact_service=artifact_service,
+        discovery_service=discovery_service,
         revision_service=revision_service,
         session_service=session_service,
         supervisor_graph=build_supervisor_graph(),

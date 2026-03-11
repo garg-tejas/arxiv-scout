@@ -15,6 +15,7 @@ const placeholderSnapshot: SessionSnapshot = {
   search_interpretation: null,
   approved_papers: [],
   latest_shortlist: [],
+  preliminary_method_table: [],
   analysis_summary: {
     selected_paper_ids: [],
     completed: false,

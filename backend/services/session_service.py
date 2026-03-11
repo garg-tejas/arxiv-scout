@@ -20,11 +20,16 @@ from models.survey import SurveySummary
 from persistence.checkpoints import GraphCheckpointStore
 from persistence.session_store import SessionStore
 from services.artifact_service import ArtifactService
+from services.discovery_service import DiscoveryService
 from services.stream_service import StreamService
 
 
 class SessionTransitionError(Exception):
     """Raised when a requested session transition is not allowed."""
+
+
+class SessionExecutionError(Exception):
+    """Raised when a session operation fails while executing an external step."""
 
 
 class SessionService:
@@ -33,11 +38,13 @@ class SessionService:
         *,
         session_store: SessionStore,
         artifact_service: ArtifactService,
+        discovery_service: DiscoveryService,
         stream_service: StreamService,
         ttl_days: int,
     ) -> None:
         self.session_store = session_store
         self.artifact_service = artifact_service
+        self.discovery_service = discovery_service
         self.stream_service = stream_service
         self.ttl_days = ttl_days
         self.checkpoints = GraphCheckpointStore(session_store)
@@ -160,8 +167,10 @@ class SessionService:
             return None
         if snapshot.current_checkpoint != CheckpointType.TOPIC_CONFIRMATION:
             raise SessionTransitionError("Session is not waiting for topic confirmation.")
+        if snapshot.search_interpretation is None or snapshot.topic is None:
+            raise SessionTransitionError("Session is missing the interpreted discovery topic.")
 
-        snapshot.status = SessionStatus.IDLE
+        snapshot.status = SessionStatus.RUNNING
         snapshot.current_phase = PhaseType.DISCOVERY
         snapshot.current_checkpoint = CheckpointType.NONE
         snapshot.pending_interrupt = None
@@ -169,20 +178,94 @@ class SessionService:
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.NODE_UPDATE,
+                phase=PhaseType.DISCOVERY,
+                message="Topic interpretation confirmed. Discovery fetch is running.",
+                data={"topic": snapshot.topic},
+            )
+        )
+
+        try:
+            shortlist, method_table = await self.discovery_service.build_shortlist(
+                topic=snapshot.topic,
+                interpretation=snapshot.search_interpretation,
+            )
+        except Exception as exc:
+            snapshot.status = SessionStatus.ERROR
+            snapshot.current_checkpoint = CheckpointType.NONE
+            snapshot.pending_interrupt = None
+            snapshot.allowed_actions = []
+            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.FAILED
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.ERROR,
+                    phase=PhaseType.DISCOVERY,
+                    message="Discovery fetch failed.",
+                    data={"error": str(exc)},
+                )
+            )
+            raise SessionExecutionError("Discovery fetch failed.") from exc
+
+        snapshot.latest_shortlist = shortlist
+        snapshot.preliminary_method_table = method_table
+        snapshot.status = SessionStatus.WAITING_FOR_INPUT
+        snapshot.current_phase = PhaseType.DISCOVERY
+        snapshot.current_checkpoint = CheckpointType.SHORTLIST_REVIEW
+        snapshot.pending_interrupt = PendingInterrupt(
+            checkpoint=CheckpointType.SHORTLIST_REVIEW,
+            message="Review the curated shortlist before approvals and nudges are enabled in the next checkpoint.",
+            expected_action_types=[],
+        )
+        snapshot.allowed_actions = []
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.last_updated_at = utc_now()
+
+        await self._persist_snapshot(snapshot)
         await self.checkpoints.save(
             session_id=session_id,
             phase=PhaseType.DISCOVERY.value,
-            checkpoint_key="topic_confirmed",
+            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
             state=snapshot.model_dump(mode="json"),
             saved_at=snapshot.last_updated_at,
         )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
-                event_type=StreamEventType.NODE_UPDATE,
+                event_type=StreamEventType.ARTIFACT_READY,
                 phase=PhaseType.DISCOVERY,
-                message="Topic interpretation confirmed. Discovery fetch is ready for the next checkpoint.",
-                data={"topic": snapshot.topic},
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.SHORTLIST,
+                message="Curated shortlist is ready for review.",
+                data={"papers": [paper.model_dump(mode="json") for paper in shortlist]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.PRELIMINARY_METHOD_TABLE,
+                message="Preliminary method extraction table is ready.",
+                data={"rows": [row.model_dump(mode="json") for row in method_table]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.INTERRUPT,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                message=snapshot.pending_interrupt.message,
+                data=snapshot.pending_interrupt.model_dump(mode="json"),
             )
         )
         return snapshot

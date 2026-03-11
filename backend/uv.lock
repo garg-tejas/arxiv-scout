@@ -49,6 +49,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "langgraph" },
     { name = "pydantic-settings" },
     { name = "ruff" },
@@ -59,6 +60,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langgraph", specifier = ">=0.2.34" },
     { name = "pydantic-settings", specifier = ">=2.6.1" },
     { name = "ruff", specifier = ">=0.15.5" },

@@ -7,7 +7,7 @@ from app.dependencies import ServiceContainer, get_services
 from models.discovery import ConfirmTopicRequest, StartTopicRequest
 from models.events import CreateSessionResponse
 from models.session import SessionSnapshot
-from services.session_service import SessionTransitionError
+from services.session_service import SessionExecutionError, SessionTransitionError
 
 router = APIRouter(tags=["sessions"])
 
@@ -103,6 +103,8 @@ async def confirm_topic_interpretation(
         snapshot = await services.session_service.confirm_topic_interpretation(session_id)
     except SessionTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SessionExecutionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     if snapshot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")

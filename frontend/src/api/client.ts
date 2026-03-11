@@ -19,6 +19,30 @@ export interface SearchInterpretation {
   search_angles: string[];
 }
 
+export interface Author {
+  name: string;
+}
+
+export interface CuratedPaper {
+  paper_id: string;
+  arxiv_id: string | null;
+  title: string;
+  abstract: string | null;
+  authors: Author[];
+  year: number | null;
+  citation_count: number | null;
+  rationale: string | null;
+  score: number | null;
+}
+
+export interface MethodExtractionRow {
+  paper_id: string;
+  model_type: string | null;
+  dataset: string | null;
+  metrics: string[];
+  benchmarks: string[];
+}
+
 export interface AnalysisSummary {
   selected_paper_ids: string[];
   completed: boolean;
@@ -39,7 +63,8 @@ export interface SessionSnapshot {
   topic: string | null;
   search_interpretation: SearchInterpretation | null;
   approved_papers: string[];
-  latest_shortlist: string[];
+  latest_shortlist: CuratedPaper[];
+  preliminary_method_table: MethodExtractionRow[];
   analysis_summary: AnalysisSummary;
   survey_summary: SurveySummary;
   artifact_status: Record<string, "pending" | "ready" | "failed">;
