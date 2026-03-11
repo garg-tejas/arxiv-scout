@@ -49,9 +49,22 @@ export interface MethodExtractionRow {
   benchmarks: string[];
 }
 
+export interface PaperAnalysis {
+  paper_id: string;
+  analysis_quality: "full_text" | "abstract_only";
+  core_claim: string | null;
+  methodology: string[];
+  datasets: string[];
+  metrics: string[];
+  benchmarks: string[];
+  limitations: string[];
+  explicit_citations: string[];
+}
+
 export interface AnalysisSummary {
   selected_paper_ids: string[];
   completed: boolean;
+  degraded_paper_ids: string[];
 }
 
 export interface SurveySummary {
@@ -70,8 +83,10 @@ export interface SessionSnapshot {
   search_interpretation: SearchInterpretation | null;
   steering_preferences: SteeringPreferences;
   approved_papers: string[];
+  approved_paper_details: CuratedPaper[];
   latest_shortlist: CuratedPaper[];
   preliminary_method_table: MethodExtractionRow[];
+  paper_analyses: PaperAnalysis[];
   analysis_summary: AnalysisSummary;
   survey_summary: SurveySummary;
   artifact_status: Record<string, "pending" | "ready" | "failed">;

@@ -5,6 +5,10 @@ from pydantic import BaseModel, Field
 from models.enums import AnalysisQuality
 
 
+class StartAnalysisRequest(BaseModel):
+    paper_ids: list[str] = Field(default_factory=list)
+
+
 class PaperAnalysis(BaseModel):
     paper_id: str
     analysis_quality: AnalysisQuality = AnalysisQuality.ABSTRACT_ONLY
@@ -20,3 +24,4 @@ class PaperAnalysis(BaseModel):
 class AnalysisSummary(BaseModel):
     selected_paper_ids: list[str] = Field(default_factory=list)
     completed: bool = False
+    degraded_paper_ids: list[str] = Field(default_factory=list)

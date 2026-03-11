@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from models.analysis import AnalysisSummary
+from models.analysis import AnalysisSummary, PaperAnalysis
 from models.discovery import SteeringPreferences
 from models.enums import AllowedAction, ArtifactStatusValue, CheckpointType, PhaseType, SessionStatus
 from models.papers import CuratedPaper, MethodExtractionRow
@@ -37,8 +37,10 @@ class SessionSnapshot(BaseModel):
     search_interpretation: SearchInterpretation | None = None
     steering_preferences: SteeringPreferences = Field(default_factory=SteeringPreferences)
     approved_papers: list[str] = Field(default_factory=list)
+    approved_paper_details: list[CuratedPaper] = Field(default_factory=list)
     latest_shortlist: list[CuratedPaper] = Field(default_factory=list)
     preliminary_method_table: list[MethodExtractionRow] = Field(default_factory=list)
+    paper_analyses: list[PaperAnalysis] = Field(default_factory=list)
     analysis_summary: AnalysisSummary = Field(default_factory=AnalysisSummary)
     survey_summary: SurveySummary = Field(default_factory=SurveySummary)
     artifact_status: dict[str, ArtifactStatusValue] = Field(default_factory=dict)

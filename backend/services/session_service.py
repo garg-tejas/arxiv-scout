@@ -17,10 +17,12 @@ from models.enums import (
     StreamEventType,
 )
 from models.events import StreamEvent
+from models.papers import CuratedPaper
 from models.session import PendingInterrupt, SessionSnapshot, utc_now
 from models.survey import SurveySummary
 from persistence.checkpoints import GraphCheckpointStore
 from persistence.session_store import SessionStore
+from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
 from services.discovery_service import DiscoveryService
 from services.stream_service import StreamService
@@ -40,15 +42,19 @@ class SessionService:
         *,
         session_store: SessionStore,
         artifact_service: ArtifactService,
+        analysis_service: AnalysisService,
         discovery_service: DiscoveryService,
         stream_service: StreamService,
         ttl_days: int,
+        analysis_paper_cap: int,
     ) -> None:
         self.session_store = session_store
         self.artifact_service = artifact_service
+        self.analysis_service = analysis_service
         self.discovery_service = discovery_service
         self.stream_service = stream_service
         self.ttl_days = ttl_days
+        self.analysis_paper_cap = analysis_paper_cap
         self.checkpoints = GraphCheckpointStore(session_store)
 
     async def create_session(self) -> SessionSnapshot:
@@ -105,6 +111,18 @@ class SessionService:
         snapshot.pending_interrupt = None
         snapshot.allowed_actions = []
         snapshot.topic = normalized_topic
+        snapshot.search_interpretation = None
+        snapshot.steering_preferences = SteeringPreferences()
+        snapshot.approved_papers = []
+        snapshot.approved_paper_details = []
+        snapshot.latest_shortlist = []
+        snapshot.preliminary_method_table = []
+        snapshot.paper_analyses = []
+        snapshot.analysis_summary = AnalysisSummary()
+        snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = start_time
         await self._persist_snapshot(snapshot)
 
@@ -220,6 +238,7 @@ class SessionService:
             deduped_ids.append(normalized)
 
         snapshot.approved_papers = deduped_ids
+        snapshot.approved_paper_details = self._resolve_approved_paper_details(snapshot, deduped_ids)
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.checkpoints.save(
@@ -237,6 +256,173 @@ class SessionService:
                 checkpoint=CheckpointType.SHORTLIST_REVIEW,
                 message="Approved paper list updated.",
                 data={"approved_papers": snapshot.approved_papers},
+            )
+        )
+        return snapshot
+
+    async def start_analysis(
+        self,
+        session_id: str,
+        paper_ids: list[str],
+    ) -> SessionSnapshot | None:
+        snapshot = await self.session_store.get_session_snapshot(session_id)
+        if snapshot is None:
+            return None
+
+        if not snapshot.approved_papers:
+            raise SessionTransitionError("At least one approved paper is required before analysis can start.")
+
+        selected_ids = [paper_id.strip() for paper_id in paper_ids if paper_id.strip()]
+        approved_ids = list(snapshot.approved_papers)
+
+        if not selected_ids and len(approved_ids) > self.analysis_paper_cap:
+            snapshot.status = SessionStatus.WAITING_FOR_INPUT
+            snapshot.current_phase = PhaseType.ANALYSIS
+            snapshot.current_checkpoint = CheckpointType.ANALYSIS_SELECTION
+            snapshot.pending_interrupt = PendingInterrupt(
+                checkpoint=CheckpointType.ANALYSIS_SELECTION,
+                message=f"Select up to {self.analysis_paper_cap} approved papers to analyze.",
+                expected_action_types=[AllowedAction.SELECT_ANALYSIS_PAPERS],
+            )
+            snapshot.allowed_actions = [AllowedAction.SELECT_ANALYSIS_PAPERS]
+            snapshot.analysis_summary.selected_paper_ids = []
+            snapshot.analysis_summary.completed = False
+            snapshot.analysis_summary.degraded_paper_ids = []
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.checkpoints.save(
+                session_id=session_id,
+                phase=PhaseType.ANALYSIS.value,
+                checkpoint_key=CheckpointType.ANALYSIS_SELECTION.value,
+                state=snapshot.model_dump(mode="json"),
+                saved_at=snapshot.last_updated_at,
+            )
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.INTERRUPT,
+                    phase=PhaseType.ANALYSIS,
+                    checkpoint=CheckpointType.ANALYSIS_SELECTION,
+                    message=snapshot.pending_interrupt.message,
+                    data={
+                        **snapshot.pending_interrupt.model_dump(mode="json"),
+                        "approved_papers": snapshot.approved_papers,
+                    },
+                )
+            )
+            return snapshot
+
+        if not selected_ids:
+            selected_ids = approved_ids
+
+        if len(selected_ids) > self.analysis_paper_cap:
+            raise SessionTransitionError(
+                f"Analysis accepts at most {self.analysis_paper_cap} paper IDs per run."
+            )
+
+        invalid_ids = [paper_id for paper_id in selected_ids if paper_id not in approved_ids]
+        if invalid_ids:
+            raise SessionTransitionError(
+                f"Selected paper IDs are not in the approved set: {', '.join(invalid_ids)}"
+            )
+
+        selected_papers = self._resolve_approved_paper_details(snapshot, selected_ids)
+        if len(selected_papers) != len(selected_ids):
+            missing = sorted(set(selected_ids) - {paper.paper_id for paper in selected_papers})
+            raise SessionTransitionError(
+                f"Missing metadata for approved paper(s): {', '.join(missing)}"
+            )
+
+        snapshot.status = SessionStatus.RUNNING
+        snapshot.current_phase = PhaseType.ANALYSIS
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = []
+        snapshot.analysis_summary.selected_paper_ids = selected_ids
+        snapshot.analysis_summary.completed = False
+        snapshot.analysis_summary.degraded_paper_ids = []
+        snapshot.paper_analyses = []
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.PHASE_STARTED,
+                phase=PhaseType.ANALYSIS,
+                message="Paper analysis started.",
+                data={"paper_ids": selected_ids},
+            )
+        )
+
+        degraded_ids: list[str] = []
+        analyses = []
+        try:
+            for paper in selected_papers:
+                analysis = await self.analysis_service.analyze_paper(paper)
+                analyses.append(analysis)
+                if analysis.analysis_quality.value != "full_text":
+                    degraded_ids.append(analysis.paper_id)
+                await self.stream_service.publish(
+                    StreamEvent(
+                        session_id=session_id,
+                        event_type=StreamEventType.ARTIFACT_READY,
+                        phase=PhaseType.ANALYSIS,
+                        artifact_type=ArtifactType.PAPER_ANALYSIS,
+                        message=f"Analysis ready for {paper.title}.",
+                        data=analysis.model_dump(mode="json"),
+                    )
+                )
+        except Exception as exc:
+            snapshot.status = SessionStatus.ERROR
+            snapshot.current_checkpoint = CheckpointType.NONE
+            snapshot.pending_interrupt = None
+            snapshot.allowed_actions = []
+            snapshot.analysis_summary.completed = False
+            snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.FAILED
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.ERROR,
+                    phase=PhaseType.ANALYSIS,
+                    message="Paper analysis failed.",
+                    data={"error": str(exc), "selected_paper_ids": selected_ids},
+                )
+            )
+            raise SessionExecutionError("Paper analysis failed.") from exc
+
+        snapshot.paper_analyses = analyses
+        snapshot.status = SessionStatus.IDLE
+        snapshot.current_phase = PhaseType.ANALYSIS
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = []
+        snapshot.analysis_summary.selected_paper_ids = selected_ids
+        snapshot.analysis_summary.completed = True
+        snapshot.analysis_summary.degraded_paper_ids = degraded_ids
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+        await self.checkpoints.save(
+            session_id=session_id,
+            phase=PhaseType.ANALYSIS.value,
+            checkpoint_key="analysis_completed",
+            state=snapshot.model_dump(mode="json"),
+            saved_at=snapshot.last_updated_at,
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.PHASE_COMPLETED,
+                phase=PhaseType.ANALYSIS,
+                message="Per-paper analysis completed.",
+                data={
+                    "selected_paper_ids": selected_ids,
+                    "degraded_paper_ids": degraded_ids,
+                },
             )
         )
         return snapshot
@@ -328,11 +514,13 @@ class SessionService:
             expected_action_types=[
                 AllowedAction.UPDATE_APPROVED_PAPERS,
                 AllowedAction.NUDGE_DISCOVERY,
+                AllowedAction.START_ANALYSIS,
             ],
         )
         snapshot.allowed_actions = [
             AllowedAction.UPDATE_APPROVED_PAPERS,
             AllowedAction.NUDGE_DISCOVERY,
+            AllowedAction.START_ANALYSIS,
         ]
         snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
         snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
@@ -445,3 +633,17 @@ class SessionService:
             if cleaned:
                 values.append(cleaned)
         return values
+
+    @staticmethod
+    def _resolve_approved_paper_details(
+        snapshot: SessionSnapshot,
+        paper_ids: list[str],
+    ) -> list[CuratedPaper]:
+        shortlist_map = {paper.paper_id: paper for paper in snapshot.latest_shortlist}
+        approved_map = {paper.paper_id: paper for paper in snapshot.approved_paper_details}
+        resolved: list[CuratedPaper] = []
+        for paper_id in paper_ids:
+            paper = shortlist_map.get(paper_id) or approved_map.get(paper_id)
+            if paper is not None:
+                resolved.append(paper)
+        return resolved

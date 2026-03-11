@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import ServiceContainer, get_services
+from models.analysis import StartAnalysisRequest
 from models.discovery import (
     ConfirmTopicRequest,
     DiscoveryNudgeRequest,
@@ -86,6 +87,27 @@ async def start_topic_interpretation(
         )
     except SessionTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.post("/sessions/{session_id}/analysis/start", response_model=SessionSnapshot)
+async def start_analysis(
+    session_id: str,
+    payload: StartAnalysisRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.start_analysis(
+            session_id,
+            payload.paper_ids,
+        )
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SessionExecutionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     if snapshot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")

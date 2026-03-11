@@ -19,11 +19,14 @@ const placeholderSnapshot: SessionSnapshot = {
     emphasize: [],
   },
   approved_papers: [],
+  approved_paper_details: [],
   latest_shortlist: [],
   preliminary_method_table: [],
+  paper_analyses: [],
   analysis_summary: {
     selected_paper_ids: [],
     completed: false,
+    degraded_paper_ids: [],
   },
   survey_summary: {
     section_ids: [],

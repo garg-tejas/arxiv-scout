@@ -15,8 +15,11 @@ class Settings(BaseSettings):
     semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1"
     semantic_scholar_api_key: str | None = None
     arxiv_api_url: str = "https://export.arxiv.org/api/query"
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    firecrawl_api_key: str | None = None
     discovery_results_per_angle: int = 10
     discovery_shortlist_size: int = 12
+    analysis_paper_cap: int = 8
 
     model_config = SettingsConfigDict(
         env_prefix="ARXIV_SCOUT_",
