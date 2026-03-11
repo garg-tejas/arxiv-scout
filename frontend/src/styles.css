@@ -1,0 +1,107 @@
+:root {
+  font-family: "Segoe UI", sans-serif;
+  color: #102033;
+  background:
+    radial-gradient(circle at top left, rgba(74, 144, 226, 0.18), transparent 30%),
+    linear-gradient(180deg, #f7fbff 0%, #eef4fb 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+code,
+pre {
+  font-family: "Cascadia Code", "Fira Code", monospace;
+}
+
+.app-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+
+.hero,
+.meta-card,
+.phase-card {
+  border: 1px solid rgba(16, 32, 51, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 40px rgba(16, 32, 51, 0.08);
+}
+
+.hero {
+  padding: 28px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: #4d6f8f;
+}
+
+.hero h1,
+.meta-card h2,
+.phase-card h2 {
+  margin: 0 0 10px;
+}
+
+.lede {
+  margin: 0;
+  max-width: 56ch;
+  color: #36516d;
+}
+
+.meta-card {
+  padding: 22px;
+  margin-bottom: 20px;
+}
+
+.phase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.phase-card {
+  padding: 20px;
+}
+
+.phase-card ul,
+.meta-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.snapshot-pill {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #ebf4ff;
+  color: #1b4d85;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+pre {
+  overflow: auto;
+  background: #0d1b2a;
+  color: #d7e7ff;
+  padding: 14px;
+  border-radius: 14px;
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    padding: 20px 14px 32px;
+  }
+}

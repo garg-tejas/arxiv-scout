@@ -1,0 +1,71 @@
+export type SessionStatus = "idle" | "running" | "waiting_for_input" | "completed" | "error";
+export type PhaseType = "discovery" | "analysis" | "survey" | "none";
+export type CheckpointType =
+  | "topic_confirmation"
+  | "shortlist_review"
+  | "analysis_selection"
+  | "survey_brief"
+  | "survey_review"
+  | "none";
+
+export interface PendingInterrupt {
+  checkpoint: CheckpointType;
+  message: string;
+  expected_action_types: string[];
+}
+
+export interface SearchInterpretation {
+  normalized_topic: string | null;
+  search_angles: string[];
+}
+
+export interface AnalysisSummary {
+  selected_paper_ids: string[];
+  completed: boolean;
+}
+
+export interface SurveySummary {
+  section_ids: string[];
+  completed: boolean;
+}
+
+export interface SessionSnapshot {
+  session_id: string;
+  status: SessionStatus;
+  current_phase: PhaseType;
+  current_checkpoint: CheckpointType;
+  pending_interrupt: PendingInterrupt | null;
+  allowed_actions: string[];
+  topic: string | null;
+  search_interpretation: SearchInterpretation | null;
+  approved_papers: string[];
+  latest_shortlist: string[];
+  analysis_summary: AnalysisSummary;
+  survey_summary: SurveySummary;
+  artifact_status: Record<string, "pending" | "ready" | "failed">;
+  last_updated_at: string;
+}
+
+export interface CreateSessionResponse {
+  session_id: string;
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+export async function createSession(): Promise<CreateSessionResponse> {
+  const response = await fetch(`${API_BASE}/sessions`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to create session: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getSession(sessionId: string): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to load session: ${response.status}`);
+  }
+  return response.json();
+}
