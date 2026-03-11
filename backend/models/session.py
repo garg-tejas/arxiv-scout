@@ -9,7 +9,7 @@ from models.citation import CitationGraph
 from models.discovery import SteeringPreferences
 from models.enums import AllowedAction, ArtifactStatusValue, CheckpointType, PhaseType, SessionStatus
 from models.papers import CuratedPaper, MethodExtractionRow
-from models.survey import SurveySummary
+from models.survey import SurveyBrief, SurveyDocument, SurveySection, SurveySummary, ThemeCluster
 
 
 def utc_now() -> datetime:
@@ -45,6 +45,10 @@ class SessionSnapshot(BaseModel):
     method_comparison_table: list[MethodComparisonRow] = Field(default_factory=list)
     citation_graph: CitationGraph | None = None
     analysis_summary: AnalysisSummary = Field(default_factory=AnalysisSummary)
+    survey_brief: SurveyBrief | None = None
+    theme_clusters: list[ThemeCluster] = Field(default_factory=list)
+    survey_sections: list[SurveySection] = Field(default_factory=list)
+    final_survey_document: SurveyDocument | None = None
     survey_summary: SurveySummary = Field(default_factory=SurveySummary)
     artifact_status: dict[str, ArtifactStatusValue] = Field(default_factory=dict)
     last_updated_at: datetime = Field(default_factory=utc_now)

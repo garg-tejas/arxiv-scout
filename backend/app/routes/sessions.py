@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response, status
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.dependencies import ServiceContainer, get_services
 from models.analysis import StartAnalysisRequest
@@ -13,6 +13,7 @@ from models.discovery import (
 )
 from models.events import CreateSessionResponse
 from models.session import SessionSnapshot
+from models.survey import StartSurveyRequest, SurveyRevisionRequest
 from services.session_service import SessionExecutionError, SessionTransitionError
 
 router = APIRouter(tags=["sessions"])
@@ -112,6 +113,79 @@ async def start_analysis(
     if snapshot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return snapshot
+
+
+@router.post("/sessions/{session_id}/survey/start", response_model=SessionSnapshot)
+async def start_survey(
+    session_id: str,
+    payload: StartSurveyRequest = Body(default_factory=StartSurveyRequest),
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.start_survey(
+            session_id,
+            brief=payload.brief,
+            skip=payload.skip,
+        )
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SessionExecutionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.post("/sessions/{session_id}/survey/revise", response_model=SessionSnapshot)
+async def revise_survey(
+    session_id: str,
+    payload: SurveyRevisionRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.revise_survey(
+            session_id,
+            payload,
+        )
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SessionExecutionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.post("/sessions/{session_id}/survey/approve", response_model=SessionSnapshot)
+async def approve_survey(
+    session_id: str,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.approve_survey(session_id)
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.get("/sessions/{session_id}/survey.md", response_class=PlainTextResponse)
+async def get_survey_markdown(
+    session_id: str,
+    services: ServiceContainer = Depends(get_services),
+) -> PlainTextResponse:
+    try:
+        markdown = await services.session_service.get_survey_markdown(session_id)
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if markdown is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return PlainTextResponse(markdown, media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/sessions/{session_id}/discovery/confirm", response_model=SessionSnapshot)

@@ -19,14 +19,16 @@ from models.enums import (
 from models.events import StreamEvent
 from models.papers import CuratedPaper
 from models.session import PendingInterrupt, SessionSnapshot, utc_now
-from models.survey import SurveySummary
+from models.survey import SurveyBrief, SurveyRevisionRequest, SurveySummary
 from persistence.checkpoints import GraphCheckpointStore
 from persistence.session_store import SessionStore
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
 from services.citation_graph_service import CitationGraphService
 from services.discovery_service import DiscoveryService
+from services.revision_service import RevisionService
 from services.stream_service import StreamService
+from services.survey_service import SurveyService
 
 
 class SessionTransitionError(Exception):
@@ -47,6 +49,8 @@ class SessionService:
         citation_graph_service: CitationGraphService,
         discovery_service: DiscoveryService,
         stream_service: StreamService,
+        revision_service: RevisionService,
+        survey_service: SurveyService,
         ttl_days: int,
         analysis_paper_cap: int,
     ) -> None:
@@ -56,6 +60,8 @@ class SessionService:
         self.citation_graph_service = citation_graph_service
         self.discovery_service = discovery_service
         self.stream_service = stream_service
+        self.revision_service = revision_service
+        self.survey_service = survey_service
         self.ttl_days = ttl_days
         self.analysis_paper_cap = analysis_paper_cap
         self.checkpoints = GraphCheckpointStore(session_store)
@@ -124,12 +130,17 @@ class SessionService:
         snapshot.method_comparison_table = []
         snapshot.citation_graph = None
         snapshot.analysis_summary = AnalysisSummary()
+        self._reset_survey_state(snapshot)
         snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = start_time
         await self._persist_snapshot(snapshot)
 
@@ -359,9 +370,14 @@ class SessionService:
         snapshot.paper_analyses = []
         snapshot.method_comparison_table = []
         snapshot.citation_graph = None
+        self._reset_survey_state(snapshot)
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -463,7 +479,7 @@ class SessionService:
         snapshot.current_phase = PhaseType.ANALYSIS
         snapshot.current_checkpoint = CheckpointType.NONE
         snapshot.pending_interrupt = None
-        snapshot.allowed_actions = []
+        snapshot.allowed_actions = [AllowedAction.START_SURVEY]
         snapshot.analysis_summary.selected_paper_ids = selected_ids
         snapshot.analysis_summary.completed = True
         snapshot.analysis_summary.degraded_paper_ids = degraded_ids
@@ -521,6 +537,245 @@ class SessionService:
         )
         return snapshot
 
+    async def start_survey(
+        self,
+        session_id: str,
+        *,
+        brief: SurveyBrief | None,
+        skip: bool,
+    ) -> SessionSnapshot | None:
+        snapshot = await self.session_store.get_session_snapshot(session_id)
+        if snapshot is None:
+            return None
+        if not snapshot.analysis_summary.completed or not snapshot.paper_analyses:
+            raise SessionTransitionError("Complete analysis before starting survey generation.")
+
+        if brief is None and not skip:
+            snapshot.status = SessionStatus.WAITING_FOR_INPUT
+            snapshot.current_phase = PhaseType.SURVEY
+            snapshot.current_checkpoint = CheckpointType.SURVEY_BRIEF
+            snapshot.pending_interrupt = PendingInterrupt(
+                checkpoint=CheckpointType.SURVEY_BRIEF,
+                message="Provide a survey brief or skip to synthesize one automatically.",
+                expected_action_types=[
+                    AllowedAction.SUBMIT_SURVEY_BRIEF,
+                    AllowedAction.SKIP_SURVEY_BRIEF,
+                ],
+            )
+            snapshot.allowed_actions = [
+                AllowedAction.SUBMIT_SURVEY_BRIEF,
+                AllowedAction.SKIP_SURVEY_BRIEF,
+            ]
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.checkpoints.save(
+                session_id=session_id,
+                phase=PhaseType.SURVEY.value,
+                checkpoint_key=CheckpointType.SURVEY_BRIEF.value,
+                state=snapshot.model_dump(mode="json"),
+                saved_at=snapshot.last_updated_at,
+            )
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.INTERRUPT,
+                    phase=PhaseType.SURVEY,
+                    checkpoint=CheckpointType.SURVEY_BRIEF,
+                    message=snapshot.pending_interrupt.message,
+                    data=snapshot.pending_interrupt.model_dump(mode="json"),
+                )
+            )
+            return snapshot
+
+        survey_brief = brief or self.survey_service.synthesize_brief(snapshot)
+        try:
+            return await self._run_survey_pipeline(
+                snapshot,
+                survey_brief=survey_brief,
+                phase_message="Survey generation started.",
+            )
+        except Exception as exc:
+            await self._mark_survey_failure(
+                snapshot,
+                message="Survey generation failed.",
+                error=exc,
+            )
+            raise SessionExecutionError("Survey generation failed.") from exc
+
+    async def revise_survey(
+        self,
+        session_id: str,
+        revision_request: SurveyRevisionRequest,
+    ) -> SessionSnapshot | None:
+        snapshot = await self.session_store.get_session_snapshot(session_id)
+        if snapshot is None:
+            return None
+        if snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW or snapshot.final_survey_document is None:
+            raise SessionTransitionError("Session is not waiting at final survey review.")
+        if snapshot.survey_brief is None:
+            raise SessionTransitionError("Survey brief is missing from the current session.")
+
+        try:
+            revision_map = self.revision_service.validate_revisions(revision_request)
+        except ValueError as exc:
+            raise SessionTransitionError(str(exc)) from exc
+
+        cluster_map = {cluster.cluster_id: cluster for cluster in snapshot.theme_clusters}
+        section_map = {section.section_id: section for section in snapshot.survey_sections}
+        unknown_ids = sorted(set(revision_map) - set(section_map))
+        if unknown_ids:
+            raise SessionTransitionError(
+                f"Unknown survey section IDs: {', '.join(unknown_ids)}"
+            )
+
+        snapshot.status = SessionStatus.RUNNING
+        snapshot.current_phase = PhaseType.SURVEY
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = []
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.NODE_UPDATE,
+                phase=PhaseType.SURVEY,
+                message="Targeted survey section revision started.",
+                data={"section_ids": list(revision_map)},
+            )
+        )
+
+        try:
+            selected_papers = self._resolve_selected_analysis_papers(snapshot)
+            updated_sections = []
+            for section in snapshot.survey_sections:
+                if section.section_id not in revision_map:
+                    updated_sections.append(section)
+                    continue
+                cluster = cluster_map[section.section_id]
+                regenerated = await self._draft_and_review_section(
+                    session_id=session_id,
+                    snapshot=snapshot,
+                    cluster=cluster,
+                    papers=selected_papers,
+                    revision_feedback=revision_map[section.section_id],
+                    revision_count=min(section.revision_count + 1, 2),
+                )
+                updated_sections.append(regenerated)
+
+            final_document = self.survey_service.assemble_document(
+                brief=snapshot.survey_brief,
+                sections=updated_sections,
+                comparison_rows=snapshot.method_comparison_table,
+                papers=selected_papers,
+                citation_graph=snapshot.citation_graph,
+            )
+            snapshot.survey_sections = updated_sections
+            snapshot.final_survey_document = final_document
+            snapshot.survey_summary.section_ids = [section.section_id for section in updated_sections]
+            snapshot.survey_summary.completed = True
+            snapshot.survey_summary.cluster_count = len(snapshot.theme_clusters)
+            snapshot.survey_summary.brief_ready = True
+            snapshot.survey_summary.markdown_ready = True
+            snapshot.status = SessionStatus.WAITING_FOR_INPUT
+            snapshot.current_phase = PhaseType.SURVEY
+            snapshot.current_checkpoint = CheckpointType.SURVEY_REVIEW
+            snapshot.pending_interrupt = PendingInterrupt(
+                checkpoint=CheckpointType.SURVEY_REVIEW,
+                message="Review the assembled survey or request further targeted revisions.",
+                expected_action_types=[
+                    AllowedAction.REVISE_SURVEY_SECTIONS,
+                    AllowedAction.APPROVE_FINAL_SURVEY,
+                ],
+            )
+            snapshot.allowed_actions = [
+                AllowedAction.REVISE_SURVEY_SECTIONS,
+                AllowedAction.APPROVE_FINAL_SURVEY,
+            ]
+            snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.READY
+            snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.checkpoints.save(
+                session_id=session_id,
+                phase=PhaseType.SURVEY.value,
+                checkpoint_key=CheckpointType.SURVEY_REVIEW.value,
+                state=snapshot.model_dump(mode="json"),
+                saved_at=snapshot.last_updated_at,
+            )
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.ARTIFACT_READY,
+                    phase=PhaseType.SURVEY,
+                    checkpoint=CheckpointType.SURVEY_REVIEW,
+                    artifact_type=ArtifactType.FINAL_SURVEY_MARKDOWN,
+                    message="Final survey markdown updated after targeted revisions.",
+                    data={"markdown": final_document.markdown},
+                )
+            )
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.INTERRUPT,
+                    phase=PhaseType.SURVEY,
+                    checkpoint=CheckpointType.SURVEY_REVIEW,
+                    message=snapshot.pending_interrupt.message,
+                    data=snapshot.pending_interrupt.model_dump(mode="json"),
+                )
+            )
+            return snapshot
+        except Exception as exc:
+            await self._mark_survey_failure(
+                snapshot,
+                message="Survey revision failed.",
+                error=exc,
+            )
+            raise SessionExecutionError("Survey revision failed.") from exc
+
+    async def approve_survey(self, session_id: str) -> SessionSnapshot | None:
+        snapshot = await self.session_store.get_session_snapshot(session_id)
+        if snapshot is None:
+            return None
+        if snapshot.final_survey_document is None or snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW:
+            raise SessionTransitionError("Session is not waiting for final survey approval.")
+
+        snapshot.status = SessionStatus.COMPLETED
+        snapshot.current_phase = PhaseType.SURVEY
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = [AllowedAction.DOWNLOAD_SURVEY_MARKDOWN]
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+        await self.checkpoints.save(
+            session_id=session_id,
+            phase=PhaseType.SURVEY.value,
+            checkpoint_key="survey_approved",
+            state=snapshot.model_dump(mode="json"),
+            saved_at=snapshot.last_updated_at,
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
+                event_type=StreamEventType.PHASE_COMPLETED,
+                phase=PhaseType.SURVEY,
+                message="Survey approved and finalized.",
+                data={"section_ids": snapshot.survey_summary.section_ids},
+            )
+        )
+        return snapshot
+
+    async def get_survey_markdown(self, session_id: str) -> str | None:
+        snapshot = await self.session_store.get_session_snapshot(session_id)
+        if snapshot is None:
+            return None
+        if snapshot.final_survey_document is None:
+            raise SessionTransitionError("Survey markdown is not ready yet.")
+        return self.survey_service.render_markdown(snapshot.final_survey_document)
+
     async def apply_discovery_nudge(self, session_id: str, text: str) -> SessionSnapshot | None:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
@@ -564,6 +819,156 @@ class SessionService:
     async def _persist_snapshot(self, snapshot: SessionSnapshot) -> None:
         expires_at = snapshot.last_updated_at + timedelta(days=self.ttl_days)
         await self.session_store.update_session_snapshot(snapshot, expires_at=expires_at)
+
+    async def _run_survey_pipeline(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        survey_brief: SurveyBrief,
+        phase_message: str,
+    ) -> SessionSnapshot:
+        selected_papers = self._resolve_selected_analysis_papers(snapshot)
+        if not selected_papers:
+            raise SessionTransitionError("Selected analysis papers are missing from the session state.")
+
+        snapshot.status = SessionStatus.RUNNING
+        snapshot.current_phase = PhaseType.SURVEY
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = []
+        snapshot.survey_brief = survey_brief
+        snapshot.theme_clusters = []
+        snapshot.survey_sections = []
+        snapshot.final_survey_document = None
+        snapshot.survey_summary = SurveySummary(
+            section_ids=[],
+            completed=False,
+            cluster_count=0,
+            brief_ready=True,
+            markdown_ready=False,
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.PHASE_STARTED,
+                phase=PhaseType.SURVEY,
+                message=phase_message,
+                data={"paper_ids": snapshot.analysis_summary.selected_paper_ids},
+            )
+        )
+
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.READY
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.SURVEY,
+                artifact_type=ArtifactType.SURVEY_BRIEF,
+                message="Survey brief is ready.",
+                data=survey_brief.model_dump(mode="json"),
+            )
+        )
+
+        clusters = self.survey_service.cluster_themes(
+            brief=survey_brief,
+            papers=selected_papers,
+            analyses=snapshot.paper_analyses,
+            comparison_rows=snapshot.method_comparison_table,
+            citation_graph=snapshot.citation_graph,
+        )
+        snapshot.theme_clusters = clusters
+        snapshot.survey_summary.cluster_count = len(clusters)
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.READY
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.SURVEY,
+                artifact_type=ArtifactType.THEME_CLUSTERS,
+                message="Theme clusters are ready.",
+                data={"clusters": [cluster.model_dump(mode="json") for cluster in clusters]},
+            )
+        )
+
+        sections = []
+        for cluster in clusters:
+            section = await self._draft_and_review_section(
+                session_id=snapshot.session_id,
+                snapshot=snapshot,
+                cluster=cluster,
+                papers=selected_papers,
+                revision_feedback=None,
+                revision_count=0,
+            )
+            sections.append(section)
+
+        final_document = self.survey_service.assemble_document(
+            brief=survey_brief,
+            sections=sections,
+            comparison_rows=snapshot.method_comparison_table,
+            papers=selected_papers,
+            citation_graph=snapshot.citation_graph,
+        )
+        snapshot.survey_sections = sections
+        snapshot.final_survey_document = final_document
+        snapshot.survey_summary.section_ids = [section.section_id for section in sections]
+        snapshot.survey_summary.completed = True
+        snapshot.survey_summary.markdown_ready = True
+        snapshot.status = SessionStatus.WAITING_FOR_INPUT
+        snapshot.current_phase = PhaseType.SURVEY
+        snapshot.current_checkpoint = CheckpointType.SURVEY_REVIEW
+        snapshot.pending_interrupt = PendingInterrupt(
+            checkpoint=CheckpointType.SURVEY_REVIEW,
+            message="Review the assembled survey or request targeted section revisions.",
+            expected_action_types=[
+                AllowedAction.REVISE_SURVEY_SECTIONS,
+                AllowedAction.APPROVE_FINAL_SURVEY,
+            ],
+        )
+        snapshot.allowed_actions = [
+            AllowedAction.REVISE_SURVEY_SECTIONS,
+            AllowedAction.APPROVE_FINAL_SURVEY,
+        ]
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+        await self.checkpoints.save(
+            session_id=snapshot.session_id,
+            phase=PhaseType.SURVEY.value,
+            checkpoint_key=CheckpointType.SURVEY_REVIEW.value,
+            state=snapshot.model_dump(mode="json"),
+            saved_at=snapshot.last_updated_at,
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.SURVEY,
+                checkpoint=CheckpointType.SURVEY_REVIEW,
+                artifact_type=ArtifactType.FINAL_SURVEY_MARKDOWN,
+                message="Final survey markdown is ready for review.",
+                data={"markdown": final_document.markdown},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.INTERRUPT,
+                phase=PhaseType.SURVEY,
+                checkpoint=CheckpointType.SURVEY_REVIEW,
+                message=snapshot.pending_interrupt.message,
+                data=snapshot.pending_interrupt.model_dump(mode="json"),
+            )
+        )
+        return snapshot
 
     async def _rerun_discovery_shortlist(
         self,
@@ -741,3 +1146,89 @@ class SessionService:
             if paper is not None:
                 resolved.append(paper)
         return resolved
+
+    def _resolve_selected_analysis_papers(self, snapshot: SessionSnapshot) -> list[CuratedPaper]:
+        selected_ids = snapshot.analysis_summary.selected_paper_ids or snapshot.approved_papers
+        return self._resolve_approved_paper_details(snapshot, selected_ids)
+
+    def _reset_survey_state(self, snapshot: SessionSnapshot) -> None:
+        snapshot.survey_brief = None
+        snapshot.theme_clusters = []
+        snapshot.survey_sections = []
+        snapshot.final_survey_document = None
+        snapshot.survey_summary = SurveySummary()
+
+    async def _mark_survey_failure(
+        self,
+        snapshot: SessionSnapshot,
+        *,
+        message: str,
+        error: Exception,
+    ) -> None:
+        snapshot.status = SessionStatus.ERROR
+        snapshot.current_phase = PhaseType.SURVEY
+        snapshot.current_checkpoint = CheckpointType.NONE
+        snapshot.pending_interrupt = None
+        snapshot.allowed_actions = []
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.FAILED
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.FAILED
+        snapshot.last_updated_at = utc_now()
+        await self._persist_snapshot(snapshot)
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ERROR,
+                phase=PhaseType.SURVEY,
+                message=message,
+                data={"error": str(error)},
+            )
+        )
+
+    async def _draft_and_review_section(
+        self,
+        *,
+        session_id: str,
+        snapshot: SessionSnapshot,
+        cluster,
+        papers: list[CuratedPaper],
+        revision_feedback: str | None,
+        revision_count: int,
+    ):
+        current_feedback = revision_feedback
+        current_revision_count = revision_count
+        while True:
+            section = self.survey_service.draft_section(
+                cluster=cluster,
+                papers=papers,
+                analyses=snapshot.paper_analyses,
+                comparison_rows=snapshot.method_comparison_table,
+                brief=snapshot.survey_brief or self.survey_service.synthesize_brief(snapshot),
+                citation_graph=snapshot.citation_graph,
+                revision_feedback=current_feedback,
+                revision_count=current_revision_count,
+            )
+            review = self.survey_service.review_section(section=section, cluster=cluster)
+            if review.verdict.value == "ACCEPT" or current_revision_count >= 2:
+                section.accepted = True
+                await self.stream_service.publish(
+                    StreamEvent(
+                        session_id=session_id,
+                        event_type=StreamEventType.ARTIFACT_READY,
+                        phase=PhaseType.SURVEY,
+                        artifact_type=ArtifactType.SURVEY_SECTION,
+                        message=f"Survey section ready: {section.title}.",
+                        data=section.model_dump(mode="json"),
+                    )
+                )
+                return section
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.NODE_UPDATE,
+                    phase=PhaseType.SURVEY,
+                    message=f"Section reviewer requested a revision for {section.title}.",
+                    data={"section_id": section.section_id, "feedback": review.feedback},
+                )
+            )
+            current_feedback = review.feedback
+            current_revision_count += 1

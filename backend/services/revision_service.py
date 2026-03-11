@@ -5,4 +5,13 @@ from models.survey import SurveyRevisionRequest
 
 class RevisionService:
     def validate_revisions(self, revision_request: SurveyRevisionRequest) -> dict[str, str]:
-        return {item.section_id: item.feedback for item in revision_request.revisions}
+        revisions: dict[str, str] = {}
+        for item in revision_request.revisions:
+            section_id = item.section_id.strip()
+            feedback = item.feedback.strip()
+            if not section_id or not feedback:
+                continue
+            revisions[section_id] = feedback
+        if not revisions:
+            raise ValueError("At least one section revision with feedback is required.")
+        return revisions

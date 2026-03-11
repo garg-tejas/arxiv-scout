@@ -12,6 +12,11 @@ class SurveyBrief(BaseModel):
     comparisons: list[str] = Field(default_factory=list)
 
 
+class StartSurveyRequest(BaseModel):
+    skip: bool = False
+    brief: SurveyBrief | None = None
+
+
 class ThemeCluster(BaseModel):
     cluster_id: str
     title: str
@@ -46,6 +51,9 @@ class SurveyDocument(BaseModel):
 class SurveySummary(BaseModel):
     section_ids: list[str] = Field(default_factory=list)
     completed: bool = False
+    cluster_count: int = 0
+    brief_ready: bool = False
+    markdown_ready: bool = False
 
 
 class SurveyRevisionRequestItem(BaseModel):

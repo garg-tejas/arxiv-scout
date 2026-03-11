@@ -21,6 +21,7 @@ from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.session_service import SessionService
 from services.stream_service import StreamService
+from services.survey_service import SurveyService
 
 
 @asynccontextmanager
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
 
     artifact_service = ArtifactService()
     revision_service = RevisionService()
+    survey_service = SurveyService()
     semantic_scholar_client = SemanticScholarClient(
         base_url=settings.semantic_scholar_base_url,
         api_key=settings.semantic_scholar_api_key,
@@ -65,6 +67,8 @@ async def lifespan(app: FastAPI):
         citation_graph_service=citation_graph_service,
         discovery_service=discovery_service,
         stream_service=stream_service,
+        revision_service=revision_service,
+        survey_service=survey_service,
         ttl_days=settings.session_ttl_days,
         analysis_paper_cap=settings.analysis_paper_cap,
     )
@@ -82,6 +86,7 @@ async def lifespan(app: FastAPI):
         artifact_service=artifact_service,
         discovery_service=discovery_service,
         revision_service=revision_service,
+        survey_service=survey_service,
         session_service=session_service,
         supervisor_graph=build_supervisor_graph(),
     )

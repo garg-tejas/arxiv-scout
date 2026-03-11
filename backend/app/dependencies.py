@@ -17,6 +17,7 @@ from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.session_service import SessionService
 from services.stream_service import StreamService
+from services.survey_service import SurveyService
 
 
 @dataclass(slots=True)
@@ -33,6 +34,7 @@ class ServiceContainer:
     artifact_service: ArtifactService
     discovery_service: DiscoveryService
     revision_service: RevisionService
+    survey_service: SurveyService
     session_service: SessionService
     supervisor_graph: object
 
