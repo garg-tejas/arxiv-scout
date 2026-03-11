@@ -23,6 +23,7 @@ const placeholderSnapshot: SessionSnapshot = {
   latest_shortlist: [],
   preliminary_method_table: [],
   paper_analyses: [],
+  citation_graph: null,
   analysis_summary: {
     selected_paper_ids: [],
     completed: false,

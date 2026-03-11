@@ -61,6 +61,36 @@ export interface PaperAnalysis {
   explicit_citations: string[];
 }
 
+export interface CitationNode {
+  node_id: string;
+  title: string;
+  role: "seed" | "context";
+  paper_id: string | null;
+}
+
+export interface CitationEdge {
+  edge_id: string;
+  source: string;
+  target: string;
+  relation: "cites" | "cited_by" | "shared_foundation" | "extends";
+  evidence_level: "direct" | "inferred";
+}
+
+export interface LineagePath {
+  node_ids: string[];
+  edge_ids: string[];
+  evidence_level: "direct" | "inferred";
+  summary: string;
+}
+
+export interface CitationGraph {
+  seed_nodes: CitationNode[];
+  context_nodes: CitationNode[];
+  edges: CitationEdge[];
+  lineage_paths: LineagePath[];
+  narrative_summary: string | null;
+}
+
 export interface AnalysisSummary {
   selected_paper_ids: string[];
   completed: boolean;
@@ -87,6 +117,7 @@ export interface SessionSnapshot {
   latest_shortlist: CuratedPaper[];
   preliminary_method_table: MethodExtractionRow[];
   paper_analyses: PaperAnalysis[];
+  citation_graph: CitationGraph | null;
   analysis_summary: AnalysisSummary;
   survey_summary: SurveySummary;
   artifact_status: Record<string, "pending" | "ready" | "failed">;

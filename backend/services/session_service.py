@@ -24,6 +24,7 @@ from persistence.checkpoints import GraphCheckpointStore
 from persistence.session_store import SessionStore
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
+from services.citation_graph_service import CitationGraphService
 from services.discovery_service import DiscoveryService
 from services.stream_service import StreamService
 
@@ -43,6 +44,7 @@ class SessionService:
         session_store: SessionStore,
         artifact_service: ArtifactService,
         analysis_service: AnalysisService,
+        citation_graph_service: CitationGraphService,
         discovery_service: DiscoveryService,
         stream_service: StreamService,
         ttl_days: int,
@@ -51,6 +53,7 @@ class SessionService:
         self.session_store = session_store
         self.artifact_service = artifact_service
         self.analysis_service = analysis_service
+        self.citation_graph_service = citation_graph_service
         self.discovery_service = discovery_service
         self.stream_service = stream_service
         self.ttl_days = ttl_days
@@ -118,11 +121,13 @@ class SessionService:
         snapshot.latest_shortlist = []
         snapshot.preliminary_method_table = []
         snapshot.paper_analyses = []
+        snapshot.citation_graph = None
         snapshot.analysis_summary = AnalysisSummary()
         snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = start_time
         await self._persist_snapshot(snapshot)
 
@@ -342,7 +347,9 @@ class SessionService:
         snapshot.analysis_summary.completed = False
         snapshot.analysis_summary.degraded_paper_ids = []
         snapshot.paper_analyses = []
+        snapshot.citation_graph = None
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -381,6 +388,7 @@ class SessionService:
             snapshot.allowed_actions = []
             snapshot.analysis_summary.completed = False
             snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -394,7 +402,36 @@ class SessionService:
             )
             raise SessionExecutionError("Paper analysis failed.") from exc
 
+        try:
+            citation_graph = await self.citation_graph_service.build_graph(
+                seed_papers=selected_papers,
+                analyses=analyses,
+            )
+        except Exception as exc:
+            snapshot.paper_analyses = analyses
+            snapshot.status = SessionStatus.ERROR
+            snapshot.current_checkpoint = CheckpointType.NONE
+            snapshot.pending_interrupt = None
+            snapshot.allowed_actions = []
+            snapshot.analysis_summary.completed = False
+            snapshot.analysis_summary.degraded_paper_ids = degraded_ids
+            snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
+            snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=session_id,
+                    event_type=StreamEventType.ERROR,
+                    phase=PhaseType.ANALYSIS,
+                    message="Citation graph construction failed.",
+                    data={"error": str(exc), "selected_paper_ids": selected_ids},
+                )
+            )
+            raise SessionExecutionError("Citation graph construction failed.") from exc
+
         snapshot.paper_analyses = analyses
+        snapshot.citation_graph = citation_graph
         snapshot.status = SessionStatus.IDLE
         snapshot.current_phase = PhaseType.ANALYSIS
         snapshot.current_checkpoint = CheckpointType.NONE
@@ -404,6 +441,7 @@ class SessionService:
         snapshot.analysis_summary.completed = True
         snapshot.analysis_summary.degraded_paper_ids = degraded_ids
         snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.READY
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.checkpoints.save(
@@ -416,12 +454,23 @@ class SessionService:
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.ANALYSIS,
+                artifact_type=ArtifactType.CITATION_GRAPH,
+                message="Citation graph and lineage summary are ready.",
+                data=citation_graph.model_dump(mode="json"),
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=session_id,
                 event_type=StreamEventType.PHASE_COMPLETED,
                 phase=PhaseType.ANALYSIS,
                 message="Per-paper analysis completed.",
                 data={
                     "selected_paper_ids": selected_ids,
                     "degraded_paper_ids": degraded_ids,
+                    "citation_graph_summary": citation_graph.narrative_summary,
                 },
             )
         )

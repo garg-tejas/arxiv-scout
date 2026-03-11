@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+from urllib.parse import quote
 
 
 class SemanticScholarClient:
@@ -38,3 +39,34 @@ class SemanticScholarClient:
             response.raise_for_status()
             payload = response.json()
         return payload.get("data", [])
+
+    async def get_paper_context(self, paper_id: str) -> dict:
+        headers = {}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+
+        fields = ",".join(
+            [
+                "paperId",
+                "title",
+                "year",
+                "citationCount",
+                "references.paperId",
+                "references.title",
+                "references.year",
+                "references.citationCount",
+                "citations.paperId",
+                "citations.title",
+                "citations.year",
+                "citations.citationCount",
+            ]
+        )
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{self.base_url}/paper/{quote(paper_id, safe='')}",
+                params={"fields": fields},
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()

@@ -12,6 +12,7 @@ from persistence.database import DatabaseManager
 from persistence.session_store import SessionStore
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
+from services.citation_graph_service import CitationGraphService
 from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.session_service import SessionService
@@ -28,6 +29,7 @@ class ServiceContainer:
     firecrawl_client: FirecrawlClient
     stream_service: StreamService
     analysis_service: AnalysisService
+    citation_graph_service: CitationGraphService
     artifact_service: ArtifactService
     discovery_service: DiscoveryService
     revision_service: RevisionService

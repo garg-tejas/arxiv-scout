@@ -16,6 +16,7 @@ from persistence.database import DatabaseManager
 from persistence.session_store import SessionStore
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
+from services.citation_graph_service import CitationGraphService
 from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.session_service import SessionService
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
         api_key=settings.firecrawl_api_key,
     )
     analysis_service = AnalysisService(firecrawl_client=firecrawl_client)
+    citation_graph_service = CitationGraphService(
+        semantic_scholar_client=semantic_scholar_client,
+    )
     discovery_service = DiscoveryService(
         semantic_scholar_client=semantic_scholar_client,
         arxiv_client=arxiv_client,
@@ -58,6 +62,7 @@ async def lifespan(app: FastAPI):
         session_store=session_store,
         artifact_service=artifact_service,
         analysis_service=analysis_service,
+        citation_graph_service=citation_graph_service,
         discovery_service=discovery_service,
         stream_service=stream_service,
         ttl_days=settings.session_ttl_days,
@@ -73,6 +78,7 @@ async def lifespan(app: FastAPI):
         firecrawl_client=firecrawl_client,
         stream_service=stream_service,
         analysis_service=analysis_service,
+        citation_graph_service=citation_graph_service,
         artifact_service=artifact_service,
         discovery_service=discovery_service,
         revision_service=revision_service,
