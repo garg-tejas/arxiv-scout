@@ -6,6 +6,7 @@ import {
   getSession,
   nudgeDiscovery,
   SessionSnapshot,
+  startAnalysis,
   startTopic,
   StreamEvent,
   updateApprovedPapers,
@@ -138,11 +139,11 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="hero">
-        <p className="eyebrow">Checkpoint 3.1</p>
+        <p className="eyebrow">Checkpoint 3.2</p>
         <h1>ArXiv Literature Scout</h1>
         <p className="lede">
-          Discovery is now wired to the live backend: interpret the topic, confirm the
-          search angles, curate the shortlist, and steer reruns with nudges.
+          Discovery and analysis are now wired to the live backend, including
+          approval-driven analysis runs, extracted summaries, and citation lineage review.
         </p>
         <div className="hero-stats">
           <div>
@@ -203,7 +204,17 @@ export function App() {
             await runSessionAction(() => nudgeDiscovery(sessionId, text));
           }}
         />
-        <AnalysisView snapshot={snapshot} />
+        <AnalysisView
+          snapshot={snapshot}
+          busy={busy}
+          errorMessage={errorMessage}
+          onStartAnalysis={async (paperIds) => {
+            if (!sessionId) {
+              return;
+            }
+            await runSessionAction(() => startAnalysis(sessionId, paperIds));
+          }}
+        />
         <SurveyView snapshot={snapshot} />
       </section>
 

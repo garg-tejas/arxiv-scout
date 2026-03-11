@@ -359,6 +359,165 @@ pre {
   gap: 12px;
 }
 
+.analysis-card {
+  align-self: start;
+}
+
+.analysis-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.summary-tile {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.selection-grid,
+.analysis-grid,
+.edge-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.selection-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 16px;
+}
+
+.selection-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 32, 51, 0.1);
+  background: #fff;
+}
+
+.selection-card-selected {
+  border-color: rgba(20, 86, 143, 0.45);
+  box-shadow: 0 10px 22px rgba(20, 86, 143, 0.12);
+}
+
+.analysis-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.analysis-paper-card {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.analysis-paper-card h4,
+.graph-legend h4,
+.lineage-list h4 {
+  margin: 0 0 6px;
+}
+
+.analysis-claim {
+  margin: 10px 0 12px;
+  color: #23435d;
+}
+
+.compact-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #4c6782;
+}
+
+.quality-badge {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.quality-badge-full {
+  background: rgba(24, 119, 88, 0.12);
+  color: #17624c;
+}
+
+.quality-badge-degraded {
+  background: rgba(184, 119, 17, 0.12);
+  color: #8b5a10;
+}
+
+.graph-wrap {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr);
+  margin-top: 14px;
+}
+
+.graph-canvas {
+  width: 100%;
+  min-height: 260px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(235, 244, 255, 0.9), rgba(247, 251, 255, 0.9));
+  border: 1px solid rgba(16, 32, 51, 0.08);
+}
+
+.graph-edge {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.graph-edge-direct {
+  stroke: #14568f;
+}
+
+.graph-edge-inferred {
+  stroke: #187758;
+  stroke-dasharray: 6 5;
+}
+
+.graph-node-seed {
+  fill: rgba(20, 86, 143, 0.18);
+  stroke: #14568f;
+  stroke-width: 2;
+}
+
+.graph-node-context {
+  fill: rgba(24, 119, 88, 0.16);
+  stroke: #187758;
+  stroke-width: 2;
+}
+
+.graph-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  fill: #13334e;
+}
+
+.graph-legend,
+.lineage-list {
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.edge-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-top: 16px;
+}
+
+.edge-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  display: grid;
+  gap: 4px;
+}
+
 .event-card {
   padding: 14px 16px;
   border-radius: 14px;
@@ -401,5 +560,9 @@ pre {
   .event-meta,
   .paper-card-top {
     flex-direction: column;
+  }
+
+  .graph-wrap {
+    grid-template-columns: 1fr;
   }
 }

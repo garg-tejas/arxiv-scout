@@ -264,3 +264,17 @@ export async function nudgeDiscovery(
   });
   return parseSnapshot(response);
 }
+
+export async function startAnalysis(
+  sessionId: string,
+  paperIds: string[],
+): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/analysis/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ paper_ids: paperIds }),
+  });
+  return parseSnapshot(response);
+}
