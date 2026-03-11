@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import ServiceContainer, get_services
+from models.discovery import ConfirmTopicRequest, StartTopicRequest
 from models.events import CreateSessionResponse
 from models.session import SessionSnapshot
+from services.session_service import SessionTransitionError
 
 router = APIRouter(tags=["sessions"])
 
@@ -64,3 +66,44 @@ async def stream_session(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/sessions/{session_id}/topic", response_model=SessionSnapshot)
+async def start_topic_interpretation(
+    session_id: str,
+    payload: StartTopicRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    try:
+        snapshot = await services.session_service.start_topic_interpretation(
+            session_id,
+            payload.topic,
+        )
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot
+
+
+@router.post("/sessions/{session_id}/discovery/confirm", response_model=SessionSnapshot)
+async def confirm_topic_interpretation(
+    session_id: str,
+    payload: ConfirmTopicRequest,
+    services: ServiceContainer = Depends(get_services),
+) -> SessionSnapshot:
+    if not payload.confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint only accepts positive confirmation.",
+        )
+
+    try:
+        snapshot = await services.session_service.confirm_topic_interpretation(session_id)
+    except SessionTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return snapshot

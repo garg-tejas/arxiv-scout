@@ -18,3 +18,21 @@ class GraphCheckpointStore:
             created_at=created_at,
             updated_at=created_at,
         )
+
+    async def save(
+        self,
+        *,
+        session_id: str,
+        phase: str,
+        checkpoint_key: str,
+        state: dict,
+        saved_at: datetime,
+    ) -> None:
+        await self.session_store.upsert_graph_checkpoint(
+            session_id=session_id,
+            phase=phase,
+            checkpoint_key=checkpoint_key,
+            state=state,
+            created_at=saved_at,
+            updated_at=saved_at,
+        )
