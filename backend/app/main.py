@@ -10,6 +10,7 @@ from app.routes import sessions
 from graph.supervisor import build_supervisor_graph
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
+from integrations.llm import GLMChatClient, GeminiChatClient, LLMRouter
 from integrations.semantic_scholar import SemanticScholarClient
 from persistence.cleanup import cleanup_expired_sessions
 from persistence.database import DatabaseManager
@@ -46,6 +47,23 @@ async def lifespan(app: FastAPI):
         base_url=settings.firecrawl_base_url,
         api_key=settings.firecrawl_api_key,
     )
+    glm_client = GLMChatClient(
+        base_url=settings.glm_base_url,
+        api_key=settings.glm_api_key,
+        default_model=settings.glm_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
+    gemini_client = GeminiChatClient(
+        base_url=settings.gemini_base_url,
+        api_key=settings.gemini_api_key,
+        default_model=settings.gemini_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
+    llm_router = LLMRouter(
+        glm_client=glm_client,
+        gemini_client=gemini_client,
+        max_retries=settings.llm_max_retries,
+    )
     analysis_service = AnalysisService(firecrawl_client=firecrawl_client)
     citation_graph_service = CitationGraphService(
         semantic_scholar_client=semantic_scholar_client,
@@ -80,6 +98,7 @@ async def lifespan(app: FastAPI):
         semantic_scholar_client=semantic_scholar_client,
         arxiv_client=arxiv_client,
         firecrawl_client=firecrawl_client,
+        llm_router=llm_router,
         stream_service=stream_service,
         analysis_service=analysis_service,
         citation_graph_service=citation_graph_service,

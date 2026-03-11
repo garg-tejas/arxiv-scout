@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     discovery_results_per_angle: int = 10
     discovery_shortlist_size: int = 12
     analysis_paper_cap: int = 8
+    glm_base_url: str = "https://api.z.ai/api/paas/v4/"
+    glm_api_key: str | None = None
+    glm_model: str = "glm-4.7-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-flash-latest"
+    llm_timeout_seconds: float = 45.0
+    llm_max_retries: int = 2
+    langsmith_tracing: bool = False
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "arxiv-literature-scout"
 
     model_config = SettingsConfigDict(
         env_prefix="ARXIV_SCOUT_",

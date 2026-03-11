@@ -7,6 +7,7 @@ from fastapi import Request
 from app.config import Settings
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
+from integrations.llm import LLMRouter
 from integrations.semantic_scholar import SemanticScholarClient
 from persistence.database import DatabaseManager
 from persistence.session_store import SessionStore
@@ -28,6 +29,7 @@ class ServiceContainer:
     semantic_scholar_client: SemanticScholarClient
     arxiv_client: ArxivClient
     firecrawl_client: FirecrawlClient
+    llm_router: LLMRouter
     stream_service: StreamService
     analysis_service: AnalysisService
     citation_graph_service: CitationGraphService

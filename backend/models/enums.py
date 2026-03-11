@@ -94,3 +94,21 @@ class EvidenceLevel(str, Enum):
 class ReviewVerdict(str, Enum):
     ACCEPT = "ACCEPT"
     REVISE = "REVISE"
+
+
+class LLMProvider(str, Enum):
+    GLM = "glm"
+    GEMINI = "gemini"
+
+
+class LLMRole(str, Enum):
+    SEARCH = "search"
+    CURATION = "curation"
+    STEERING = "steering"
+    PAPER_ANALYZER = "paper_analyzer"
+    SURVEY_ORCHESTRATOR = "survey_orchestrator"
+    THEMATIC_CLUSTERING = "thematic_clustering"
+    SECTION_WRITER = "section_writer"
+    SECTION_REVIEWER = "section_reviewer"
+    SURVEY_ASSEMBLER = "survey_assembler"
+    SMOKE_TEST = "smoke_test"
