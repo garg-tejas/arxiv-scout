@@ -144,9 +144,44 @@ export interface AnalysisSummary {
   citation_graph_summary: string | null;
 }
 
+export interface SurveyBrief {
+  angle: string | null;
+  audience: string | null;
+  emphasis: string[];
+  comparisons: string[];
+}
+
+export interface ThemeCluster {
+  cluster_id: string;
+  title: string;
+  description: string;
+  paper_ids: string[];
+}
+
+export interface SurveySection {
+  section_id: string;
+  title: string;
+  content_markdown: string;
+  paper_ids: string[];
+  revision_count: number;
+  accepted: boolean;
+}
+
+export interface SurveyDocument {
+  title: string;
+  introduction: string | null;
+  sections: SurveySection[];
+  conclusion: string | null;
+  references: string[];
+  markdown: string;
+}
+
 export interface SurveySummary {
   section_ids: string[];
   completed: boolean;
+  cluster_count: number;
+  brief_ready: boolean;
+  markdown_ready: boolean;
 }
 
 export interface SessionSnapshot {
@@ -167,6 +202,10 @@ export interface SessionSnapshot {
   method_comparison_table: MethodComparisonRow[];
   citation_graph: CitationGraph | null;
   analysis_summary: AnalysisSummary;
+  survey_brief: SurveyBrief | null;
+  theme_clusters: ThemeCluster[];
+  survey_sections: SurveySection[];
+  final_survey_document: SurveyDocument | null;
   survey_summary: SurveySummary;
   artifact_status: Record<string, "pending" | "ready" | "failed">;
   last_updated_at: string;
@@ -277,4 +316,50 @@ export async function startAnalysis(
     body: JSON.stringify({ paper_ids: paperIds }),
   });
   return parseSnapshot(response);
+}
+
+export async function startSurvey(
+  sessionId: string,
+  payload: {
+    skip?: boolean;
+    brief?: SurveyBrief | null;
+  } = {},
+): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/survey/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseSnapshot(response);
+}
+
+export async function reviseSurvey(
+  sessionId: string,
+  revisions: Array<{ section_id: string; feedback: string }>,
+): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/survey/revise`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ revisions }),
+  });
+  return parseSnapshot(response);
+}
+
+export async function approveSurvey(sessionId: string): Promise<SessionSnapshot> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/survey/approve`, {
+    method: "POST",
+  });
+  return parseSnapshot(response);
+}
+
+export async function getSurveyMarkdown(sessionId: string): Promise<string> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/survey.md`);
+  if (!response.ok) {
+    throw new Error(`Failed to load survey markdown: ${response.status}`);
+  }
+  return response.text();
 }

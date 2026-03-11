@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  approveSurvey,
   confirmTopic,
   createSession,
   getSession,
+  getSurveyMarkdown,
   nudgeDiscovery,
   SessionSnapshot,
+  startSurvey,
   startAnalysis,
   startTopic,
   StreamEvent,
   updateApprovedPapers,
+  reviseSurvey,
 } from "./api/client";
 import { SessionStream } from "./lib/sse";
 import { AnalysisView } from "./views/analysis/AnalysisView";
@@ -46,9 +50,16 @@ const placeholderSnapshot: SessionSnapshot = {
     lineage_path_count: 0,
     citation_graph_summary: null,
   },
+  survey_brief: null,
+  theme_clusters: [],
+  survey_sections: [],
+  final_survey_document: null,
   survey_summary: {
     section_ids: [],
     completed: false,
+    cluster_count: 0,
+    brief_ready: false,
+    markdown_ready: false,
   },
   artifact_status: {},
   last_updated_at: new Date().toISOString(),
@@ -101,7 +112,7 @@ export function App() {
     const stream = new SessionStream();
 
     const handleStreamEvent = async (event: StreamEvent) => {
-      setStreamEvents((current) => [event, ...current].slice(0, 10));
+      setStreamEvents((current: StreamEvent[]) => [event, ...current].slice(0, 10));
       try {
         const nextSnapshot = await getSession(sessionId);
         setSnapshot(nextSnapshot);
@@ -139,11 +150,11 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="hero">
-        <p className="eyebrow">Checkpoint 3.2</p>
+        <p className="eyebrow">Checkpoint 3.4</p>
         <h1>ArXiv Literature Scout</h1>
         <p className="lede">
-          Discovery and analysis are now wired to the live backend, including
-          approval-driven analysis runs, extracted summaries, and citation lineage review.
+          Discovery, analysis, and survey generation are now wired to the live backend,
+          including brief checkpoints, section revisions, and markdown export.
         </p>
         <div className="hero-stats">
           <div>
@@ -215,7 +226,50 @@ export function App() {
             await runSessionAction(() => startAnalysis(sessionId, paperIds));
           }}
         />
-        <SurveyView snapshot={snapshot} />
+        <SurveyView
+          snapshot={snapshot}
+          busy={busy}
+          errorMessage={errorMessage}
+          onStartSurvey={async (payload) => {
+            if (!sessionId) {
+              return;
+            }
+            await runSessionAction(() => startSurvey(sessionId, payload));
+          }}
+          onReviseSurvey={async (revisions) => {
+            if (!sessionId) {
+              return;
+            }
+            await runSessionAction(() => reviseSurvey(sessionId, revisions));
+          }}
+          onApproveSurvey={async () => {
+            if (!sessionId) {
+              return;
+            }
+            await runSessionAction(() => approveSurvey(sessionId));
+          }}
+          onDownloadMarkdown={async () => {
+            if (!sessionId) {
+              return;
+            }
+            try {
+              setBusy(true);
+              setErrorMessage(null);
+              const markdown = await getSurveyMarkdown(sessionId);
+              const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const anchor = document.createElement("a");
+              anchor.href = url;
+              anchor.download = "arxiv-literature-scout-survey.md";
+              anchor.click();
+              URL.revokeObjectURL(url);
+            } catch (error) {
+              setErrorMessage(error instanceof Error ? error.message : "Markdown download failed.");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
       </section>
 
       <section className="meta-card">

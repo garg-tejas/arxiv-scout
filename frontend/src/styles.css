@@ -363,10 +363,31 @@ pre {
   align-self: start;
 }
 
+.survey-card {
+  align-self: start;
+}
+
 .analysis-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
+}
+
+.survey-summary-grid,
+.brief-grid,
+.cluster-grid,
+.survey-section-list {
+  display: grid;
+  gap: 12px;
+}
+
+.survey-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.brief-grid,
+.cluster-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .summary-tile {
@@ -530,6 +551,52 @@ pre {
   color: #39566f;
 }
 
+.secondary-button {
+  border: 1px solid rgba(20, 86, 143, 0.18);
+  border-radius: 999px;
+  padding: 11px 18px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #14568f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cluster-card,
+.survey-section-card {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.cluster-card h4,
+.survey-section-card h4 {
+  margin: 0 0 8px;
+}
+
+.cluster-card p {
+  margin: 0 0 8px;
+  color: #3f5e79;
+}
+
+.markdown-preview {
+  white-space: pre-wrap;
+  background: #f5f8fc;
+  color: #16324b;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  margin-top: 14px;
+}
+
+.markdown-preview-section {
+  max-height: 280px;
+  overflow: auto;
+}
+
 .error-banner {
   margin: 0;
   padding: 12px 14px;
@@ -563,6 +630,12 @@ pre {
   }
 
   .graph-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .brief-grid,
+  .cluster-grid,
+  .survey-summary-grid {
     grid-template-columns: 1fr;
   }
 }
