@@ -25,3 +25,4 @@ frontend/*.tsbuildinfo
 .env.*
 *.md
 !README.md
+!.env.example

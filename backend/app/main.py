@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 
@@ -31,6 +32,15 @@ from services.survey_service import SurveyService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
+    # Optional LangSmith / LangChain tracing
+    if settings.langsmith_tracing and settings.langsmith_api_key:
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+        os.environ.setdefault("LANGCHAIN_API_KEY", settings.langsmith_api_key)
+        if settings.langsmith_project:
+            os.environ.setdefault("LANGCHAIN_PROJECT", settings.langsmith_project)
+
     database = DatabaseManager(settings.database_path)
     await database.connect()
     await database.initialize()

@@ -20,6 +20,7 @@ from models.papers import CuratedPaper
 from models.session import PendingInterrupt, SessionSnapshot, utc_now
 from models.survey import SurveyBrief, SurveyRevisionRequest, SurveySummary
 from persistence.session_store import SessionStore
+from graph.checkpoint import get_run_config
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
 from services.citation_graph_service import CitationGraphService
@@ -163,7 +164,7 @@ class SessionService:
                     "command": GraphCommand.START_TOPIC.value,
                     "topic": snapshot.topic,
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
             interpretation = state.get("search_interpretation")
             pending_interrupt = state.get("pending_interrupt")
@@ -255,7 +256,7 @@ class SessionService:
                     "session_id": session_id,
                     "command": GraphCommand.CONFIRM_TOPIC.value,
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
@@ -361,11 +362,11 @@ class SessionService:
 
         snapshot.approved_papers = deduped_ids
         await self.discovery_graph.aupdate_state(
-            config={"configurable": {"thread_id": session_id}},
+            config=get_run_config(session_id),
             values={"approved_papers": deduped_ids},
             as_node="store_approved_papers",
         )
-        graph_state = await self.discovery_graph.aget_state({"configurable": {"thread_id": session_id}})
+        graph_state = await self.discovery_graph.aget_state(get_run_config(session_id))
         values = graph_state.values if graph_state else {}
         snapshot.approved_papers = list(values.get("approved_papers") or deduped_ids)
         snapshot.approved_paper_details = list(values.get("approved_paper_details") or [])
@@ -495,7 +496,7 @@ class SessionService:
                     "session_id": session_id,
                     "selected_papers": [paper.model_dump(mode="json") for paper in selected_papers],
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
@@ -641,7 +642,7 @@ class SessionService:
                     "method_comparison_table": [row.model_dump(mode="json") for row in snapshot.method_comparison_table],
                     "citation_graph": snapshot.citation_graph.model_dump(mode="json") if snapshot.citation_graph else None,
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
         except Exception as exc:
             await self._mark_survey_failure(
@@ -714,7 +715,7 @@ class SessionService:
                     "revision_feedback_map": revision_map,
                     "section_queue": list(revision_map.keys()),
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
         except Exception as exc:
             await self._mark_survey_failure(
@@ -774,7 +775,7 @@ class SessionService:
                     "command": GraphCommand.NUDGE_DISCOVERY.value,
                     "nudge_text": text,
                 },
-                config={"configurable": {"thread_id": session_id}},
+                config=get_run_config(session_id),
             )
         except Exception as exc:
             raise SessionExecutionError("Discovery steering merge failed.") from exc
