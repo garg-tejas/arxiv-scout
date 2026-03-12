@@ -40,6 +40,7 @@ class ServiceContainer:
     session_service: SessionService
     discovery_graph: object
     analysis_graph: object
+    survey_graph: object
     supervisor_graph: object
 
 

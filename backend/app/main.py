@@ -9,6 +9,7 @@ from app.dependencies import ServiceContainer
 from app.routes import sessions
 from graph.analysis import build_analysis_graph
 from graph.discovery import build_discovery_graph
+from graph.survey import build_survey_graph
 from graph.supervisor import build_supervisor_graph
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
@@ -91,6 +92,10 @@ async def lifespan(app: FastAPI):
         artifact_service=artifact_service,
         stream_service=stream_service,
     )
+    survey_graph = build_survey_graph(
+        survey_service=survey_service,
+        stream_service=stream_service,
+    )
     session_service = SessionService(
         session_store=session_store,
         artifact_service=artifact_service,
@@ -104,6 +109,7 @@ async def lifespan(app: FastAPI):
         analysis_paper_cap=settings.analysis_paper_cap,
         discovery_graph=discovery_graph,
         analysis_graph=analysis_graph,
+        survey_graph=survey_graph,
     )
 
     app.state.services = ServiceContainer(
@@ -124,6 +130,7 @@ async def lifespan(app: FastAPI):
         session_service=session_service,
         discovery_graph=discovery_graph,
         analysis_graph=analysis_graph,
+        survey_graph=survey_graph,
         supervisor_graph=build_supervisor_graph(),
     )
 

@@ -25,3 +25,8 @@ class AppGraphState(TypedDict, total=False):
     degraded_paper_ids: list[str]
     citation_graph: object
     method_comparison_table: list[object]
+
+    survey_brief: object
+    theme_clusters: list[object]
+    survey_sections: list[object]
+    final_survey_document: object
