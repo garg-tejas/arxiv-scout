@@ -1,39 +1,68 @@
 from __future__ import annotations
 
-from collections import defaultdict
+import json
 import re
 
+from integrations.llm import LLMRouter
 from models.analysis import MethodComparisonRow, PaperAnalysis
 from models.citation import CitationGraph
-from models.enums import CitationEdgeType, ReviewVerdict
+from models.enums import CitationEdgeType, LLMRole
 from models.papers import CuratedPaper
 from models.session import SessionSnapshot
-from models.survey import SectionReviewResult, SurveyBrief, SurveyDocument, SurveySection, ThemeCluster
+from models.survey import (
+    SectionReviewResult,
+    SurveyAssemblyDraft,
+    SurveyBrief,
+    SurveyDocument,
+    SurveySection,
+    SurveySectionDraft,
+    ThemeCluster,
+    ThemeClusterBatch,
+)
 
 
 class SurveyService:
-    def synthesize_brief(self, snapshot: SessionSnapshot) -> SurveyBrief:
-        comparison_rows = snapshot.method_comparison_table
-        model_types = [row.model_type for row in comparison_rows if row.model_type]
-        unique_models = list(dict.fromkeys(model_types))
-        emphasis = list(dict.fromkeys(snapshot.steering_preferences.emphasize))[:3]
-        comparisons: list[str] = []
-        if len(unique_models) >= 2:
-            comparisons.append(f"compare {unique_models[0]} and {unique_models[1]} approaches")
-        if snapshot.citation_graph and snapshot.citation_graph.narrative_summary:
-            comparisons.append("trace direct and inferred citation lineage across the approved papers")
-        if not comparisons:
-            comparisons.append("contrast methodology, datasets, and limitations across the approved set")
-        if not emphasis and unique_models:
-            emphasis = unique_models[:2]
-        return SurveyBrief(
-            angle=snapshot.topic or "approved arXiv paper set",
-            audience="researchers comparing recent arXiv methods",
-            emphasis=emphasis,
-            comparisons=comparisons,
-        )
+    def __init__(self, *, llm_router: LLMRouter) -> None:
+        self.llm_router = llm_router
 
-    def cluster_themes(
+    async def synthesize_brief(self, snapshot: SessionSnapshot) -> SurveyBrief:
+        payload = {
+            "topic": snapshot.topic,
+            "steering_preferences": snapshot.steering_preferences.model_dump(mode="json"),
+            "analysis_summary": snapshot.analysis_summary.model_dump(mode="json"),
+            "method_comparison_table": [
+                {
+                    "paper_id": row.paper_id,
+                    "title": row.title,
+                    "model_type": row.model_type,
+                    "datasets": row.datasets,
+                    "metrics": row.metrics,
+                    "primary_limitation": row.primary_limitation,
+                }
+                for row in snapshot.method_comparison_table
+            ][:8],
+            "citation_graph_summary": snapshot.citation_graph.narrative_summary if snapshot.citation_graph else None,
+        }
+        brief = await self.llm_router.generate_structured(
+            role=LLMRole.SURVEY_ORCHESTRATOR,
+            system_prompt=(
+                "You are the Survey Orchestrator Agent for an arXiv literature scout. "
+                "Synthesize a concise survey brief from the session context. Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- angle should state the survey angle clearly\n"
+                "- audience should be a short target-reader description\n"
+                "- emphasis should contain 1 to 4 short focus points\n"
+                "- comparisons should contain 1 to 4 specific comparisons or lineages to emphasize\n"
+                "- keep fields concise and grounded in the provided context"
+            ),
+            schema_type=SurveyBrief,
+        )
+        return self._normalize_brief(brief, fallback_topic=snapshot.topic or "approved arXiv paper set")
+
+    async def cluster_themes(
         self,
         *,
         brief: SurveyBrief,
@@ -42,44 +71,59 @@ class SurveyService:
         comparison_rows: list[MethodComparisonRow],
         citation_graph: CitationGraph | None,
     ) -> list[ThemeCluster]:
-        paper_map = {paper.paper_id: paper for paper in papers}
-        row_map = {row.paper_id: row for row in comparison_rows}
-        analysis_map = {analysis.paper_id: analysis for analysis in analyses}
+        payload = {
+            "brief": brief.model_dump(mode="json"),
+            "papers": [
+                {
+                    "paper_id": paper.paper_id,
+                    "title": paper.title,
+                    "year": paper.year,
+                }
+                for paper in papers
+            ],
+            "analyses": [
+                {
+                    "paper_id": analysis.paper_id,
+                    "core_claim": analysis.core_claim,
+                    "datasets": analysis.datasets,
+                    "metrics": analysis.metrics,
+                    "methodology": analysis.methodology[:3],
+                }
+                for analysis in analyses
+            ],
+            "comparison_rows": [
+                {
+                    "paper_id": row.paper_id,
+                    "model_type": row.model_type,
+                    "datasets": row.datasets,
+                    "metrics": row.metrics,
+                }
+                for row in comparison_rows
+            ],
+            "citation_edges": self._build_cluster_edge_payload(citation_graph),
+        }
+        batch = await self.llm_router.generate_structured(
+            role=LLMRole.THEMATIC_CLUSTERING,
+            system_prompt=(
+                "You are the Thematic Clustering Agent for an arXiv literature scout. "
+                "Group papers into coherent survey themes using the structured analysis and citation context. "
+                "Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- assign every paper_id to exactly one cluster\n"
+                "- return between 1 and 6 clusters\n"
+                "- cluster_id must be stable, lowercase, and slug-like\n"
+                "- title should be concise and presentation-ready\n"
+                "- description should explain the common method or lineage in 1 to 2 sentences\n"
+                "- prefer thematic coherence plus citation relationship, not just lexical similarity"
+            ),
+            schema_type=ThemeClusterBatch,
+        )
+        return self._normalize_clusters(batch.clusters, papers)
 
-        grouped_ids: dict[str, list[str]] = defaultdict(list)
-        for paper in papers:
-            row = row_map.get(paper.paper_id)
-            analysis = analysis_map.get(paper.paper_id)
-            label = (
-                (row.model_type if row and row.model_type else None)
-                or (analysis.datasets[0] if analysis and analysis.datasets else None)
-                or "general methods"
-            )
-            grouped_ids[label].append(paper.paper_id)
-
-        clusters: list[ThemeCluster] = []
-        for index, (label, paper_ids) in enumerate(
-            sorted(grouped_ids.items(), key=lambda item: (-len(item[1]), item[0]))
-        ):
-            internal_edges = self._count_internal_edges(citation_graph, set(paper_ids))
-            title = self._format_cluster_title(label)
-            description = (
-                f"This cluster groups papers around {label}. "
-                f"It covers {len(paper_ids)} paper(s) and {internal_edges} internal citation linkage(s)."
-            )
-            if brief.comparisons:
-                description = f"{description} The survey brief emphasizes {brief.comparisons[0]}."
-            clusters.append(
-                ThemeCluster(
-                    cluster_id=f"theme-{index + 1}-{self._slugify(label)}",
-                    title=title,
-                    description=description,
-                    paper_ids=paper_ids,
-                )
-            )
-        return clusters
-
-    def draft_section(
+    async def draft_section(
         self,
         *,
         cluster: ThemeCluster,
@@ -91,88 +135,84 @@ class SurveyService:
         revision_feedback: str | None = None,
         revision_count: int = 0,
     ) -> SurveySection:
-        paper_map = {paper.paper_id: paper for paper in papers}
-        analysis_map = {analysis.paper_id: analysis for analysis in analyses}
-        row_map = {row.paper_id: row for row in comparison_rows}
-
-        ordered_ids = sorted(
-            cluster.paper_ids,
-            key=lambda paper_id: (paper_map.get(paper_id).year or 0, paper_map.get(paper_id).title if paper_map.get(paper_id) else paper_id),
+        ordered_ids = self._ordered_cluster_ids(cluster.paper_ids, papers)
+        payload = {
+            "brief": brief.model_dump(mode="json"),
+            "cluster": cluster.model_dump(mode="json"),
+            "papers": self._build_cluster_paper_payload(ordered_ids, papers, analyses, comparison_rows),
+            "cluster_lineage": self._build_lineage_lines(ordered_ids, citation_graph, {paper.paper_id: paper for paper in papers}),
+            "revision_feedback": revision_feedback,
+        }
+        draft = await self.llm_router.generate_structured(
+            role=LLMRole.SECTION_WRITER,
+            system_prompt=(
+                "You are the Section Writer Agent for an arXiv literature scout. "
+                "Write one survey section from structured paper analyses only. Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- content_markdown must be valid markdown\n"
+                "- include these headings in order: '## <title>', '### Theme Overview', '### Approach Comparison', "
+                "'### Idea Progression', '### Open Problems'\n"
+                "- compare approaches across papers rather than summarizing each in isolation\n"
+                "- use the citation/lineage context when available\n"
+                "- mention open problems grounded in the provided limitations and evaluation gaps\n"
+                "- if revision_feedback is present, address it directly"
+            ),
+            schema_type=SurveySectionDraft,
+            provider_override=None,
         )
-        bullet_lines: list[str] = []
-        limitation_pool: list[str] = []
-        for paper_id in ordered_ids:
-            paper = paper_map.get(paper_id)
-            analysis = analysis_map.get(paper_id)
-            row = row_map.get(paper_id)
-            if paper is None or analysis is None:
-                continue
-            limitation_pool.extend(analysis.limitations)
-            model = row.model_type if row and row.model_type else "unspecified model"
-            datasets = ", ".join(analysis.datasets) if analysis.datasets else "unspecified datasets"
-            metrics = ", ".join(analysis.metrics) if analysis.metrics else "unspecified metrics"
-            bullet_lines.append(
-                f"- **{paper.title} ({paper.year or 'n.d.'})** uses {model}, studies {datasets}, "
-                f"and reports {metrics}. Core claim: {analysis.core_claim or 'No core claim extracted.'}"
-            )
-
-        lineage_lines = self._build_lineage_lines(cluster.paper_ids, citation_graph, paper_map)
-        open_problems = self._build_open_problem_lines(limitation_pool, analyses, cluster.paper_ids)
-
-        revision_line = ""
-        if revision_feedback:
-            revision_line = f"\nRevision focus: {revision_feedback}\n"
-
-        section_markdown = "\n".join(
-            [
-                f"## {cluster.title}",
-                "",
-                "### Theme Overview",
-                f"{cluster.description} This section is written for {brief.audience or 'research readers'}.{revision_line}".strip(),
-                "",
-                "### Approach Comparison",
-                *bullet_lines,
-                "",
-                "### Idea Progression",
-                *lineage_lines,
-                "",
-                "### Open Problems",
-                *open_problems,
-            ]
-        )
-
+        title = " ".join(draft.title.split()).strip() or cluster.title
+        content_markdown = draft.content_markdown.strip()
+        if not content_markdown.startswith("## "):
+            content_markdown = f"## {title}\n\n{content_markdown}"
         return SurveySection(
             section_id=cluster.cluster_id,
-            title=cluster.title,
-            content_markdown=section_markdown,
+            title=title,
+            content_markdown=content_markdown,
             paper_ids=ordered_ids,
             revision_count=revision_count,
             accepted=False,
         )
 
-    def review_section(
+    async def review_section(
         self,
         *,
         section: SurveySection,
         cluster: ThemeCluster,
+        brief: SurveyBrief,
     ) -> SectionReviewResult:
-        feedback: list[str] = []
-        content = section.content_markdown
-        if "### Approach Comparison" not in content:
-            feedback.append("Add a dedicated comparison subsection.")
-        if "### Open Problems" not in content:
-            feedback.append("Add an explicit open problems subsection.")
-        if len(content) < 700 and len(cluster.paper_ids) > 1:
-            feedback.append("Expand the section with clearer multi-paper comparison detail.")
-
-        verdict = ReviewVerdict.REVISE if feedback and section.revision_count < 2 else ReviewVerdict.ACCEPT
-        return SectionReviewResult(
-            verdict=verdict,
-            feedback=" ".join(feedback) if feedback else "Section satisfies the survey brief.",
-            revision_count=section.revision_count,
+        payload = {
+            "brief": brief.model_dump(mode="json"),
+            "cluster": cluster.model_dump(mode="json"),
+            "section": {
+                "title": section.title,
+                "content_markdown": section.content_markdown,
+                "paper_ids": section.paper_ids,
+                "revision_count": section.revision_count,
+            },
+        }
+        review = await self.llm_router.generate_structured(
+            role=LLMRole.SECTION_REVIEWER,
+            system_prompt=(
+                "You are the Section Reviewer Agent for an arXiv literature scout. "
+                "Review a drafted survey section against the survey brief and cluster intent. Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- verdict must be ACCEPT or REVISE\n"
+                "- REVISE only when the section materially misses comparison depth, lineage clarity, or open problems\n"
+                "- feedback should be one concise paragraph the writer can act on immediately\n"
+                "- keep revision_count unchanged; it will be set by the caller"
+            ),
+            schema_type=SectionReviewResult,
         )
+        review.revision_count = section.revision_count
+        return review
 
-    def assemble_document(
+    async def assemble_document(
         self,
         *,
         brief: SurveyBrief,
@@ -181,17 +221,36 @@ class SurveyService:
         papers: list[CuratedPaper],
         citation_graph: CitationGraph | None,
     ) -> SurveyDocument:
-        intro = (
-            f"This survey examines {brief.angle or 'the approved paper set'} for "
-            f"{brief.audience or 'research readers'}. It emphasizes "
-            f"{', '.join(brief.emphasis) if brief.emphasis else 'methodological comparison'}."
+        payload = {
+            "brief": brief.model_dump(mode="json"),
+            "section_titles": [section.title for section in sections],
+            "citation_graph_summary": citation_graph.narrative_summary if citation_graph else None,
+            "comparison_rows": [
+                {
+                    "title": row.title,
+                    "model_type": row.model_type,
+                    "datasets": row.datasets,
+                    "metrics": row.metrics,
+                    "primary_limitation": row.primary_limitation,
+                }
+                for row in comparison_rows[:8]
+            ],
+        }
+        draft = await self.llm_router.generate_structured(
+            role=LLMRole.SURVEY_ASSEMBLER,
+            system_prompt=(
+                "You are the Survey Assembler Agent for an arXiv literature scout. "
+                "Write the introduction and conclusion for a structured survey. Return JSON only."
+            ),
+            user_prompt=(
+                f"{json.dumps(payload, indent=2)}\n\n"
+                "Rules:\n"
+                "- introduction should orient the reader to the survey angle and comparison priorities\n"
+                "- conclusion should synthesize the main tradeoffs, progressions, and open directions\n"
+                "- do not invent references or paper details beyond the provided context"
+            ),
+            schema_type=SurveyAssemblyDraft,
         )
-        conclusion = (
-            "Across the approved papers, the dominant trade-offs center on dataset coverage, "
-            "evaluation depth, and whether newer methods clearly extend or only weakly align with prior work."
-        )
-        if citation_graph and citation_graph.narrative_summary:
-            conclusion = f"{conclusion} {citation_graph.narrative_summary}"
 
         references = []
         for paper in papers:
@@ -205,7 +264,7 @@ class SurveyService:
             "# ArXiv Literature Scout Survey",
             "",
             "## Introduction",
-            intro,
+            (draft.introduction or "").strip(),
             "",
             *[section.content_markdown for section in sections],
             "",
@@ -213,22 +272,133 @@ class SurveyService:
             comparison_markdown,
             "",
             "## Conclusion",
-            conclusion,
+            (draft.conclusion or "").strip(),
             "",
             "## References",
             *references,
         ]
-        markdown = "\n".join(markdown_parts).strip()
+        markdown = "\n".join(part for part in markdown_parts if part is not None).strip()
         return SurveyDocument(
-            introduction=intro,
+            introduction=(draft.introduction or "").strip() or None,
             sections=sections,
-            conclusion=conclusion,
+            conclusion=(draft.conclusion or "").strip() or None,
             references=references,
             markdown=markdown,
         )
 
     def render_markdown(self, document: SurveyDocument) -> str:
         return document.markdown
+
+    @staticmethod
+    def _normalize_brief(brief: SurveyBrief, *, fallback_topic: str) -> SurveyBrief:
+        return SurveyBrief(
+            angle=" ".join((brief.angle or fallback_topic).split()).strip(),
+            audience=" ".join((brief.audience or "research readers").split()).strip(),
+            emphasis=SurveyService._normalize_strings(brief.emphasis, limit=4),
+            comparisons=SurveyService._normalize_strings(brief.comparisons, limit=4),
+        )
+
+    def _normalize_clusters(
+        self,
+        clusters: list[ThemeCluster],
+        papers: list[CuratedPaper],
+    ) -> list[ThemeCluster]:
+        valid_ids = {paper.paper_id for paper in papers}
+        assigned: set[str] = set()
+        normalized: list[ThemeCluster] = []
+
+        for index, cluster in enumerate(clusters, start=1):
+            paper_ids = [paper_id for paper_id in cluster.paper_ids if paper_id in valid_ids and paper_id not in assigned]
+            if not paper_ids:
+                continue
+            assigned.update(paper_ids)
+            cluster_id = self._slugify(cluster.cluster_id or cluster.title or f"theme-{index}")
+            normalized.append(
+                ThemeCluster(
+                    cluster_id=cluster_id,
+                    title=" ".join(cluster.title.split()).strip() or f"Theme {index}",
+                    description=" ".join(cluster.description.split()).strip(),
+                    paper_ids=paper_ids,
+                )
+            )
+
+        remaining = [paper.paper_id for paper in papers if paper.paper_id not in assigned]
+        if remaining:
+            normalized.append(
+                ThemeCluster(
+                    cluster_id=self._slugify("general-method-directions"),
+                    title="General Method Directions",
+                    description="This cluster groups papers that were not cleanly assigned to a more specific theme.",
+                    paper_ids=remaining,
+                )
+            )
+
+        return normalized or [
+            ThemeCluster(
+                cluster_id=self._slugify("general-method-directions"),
+                title="General Method Directions",
+                description="This cluster groups the approved papers into one general theme.",
+                paper_ids=[paper.paper_id for paper in papers],
+            )
+        ]
+
+    @staticmethod
+    def _ordered_cluster_ids(cluster_ids: list[str], papers: list[CuratedPaper]) -> list[str]:
+        paper_map = {paper.paper_id: paper for paper in papers}
+        return sorted(
+            cluster_ids,
+            key=lambda paper_id: (
+                paper_map.get(paper_id).year or 0 if paper_map.get(paper_id) else 0,
+                paper_map.get(paper_id).title if paper_map.get(paper_id) else paper_id,
+            ),
+        )
+
+    @staticmethod
+    def _build_cluster_paper_payload(
+        ordered_ids: list[str],
+        papers: list[CuratedPaper],
+        analyses: list[PaperAnalysis],
+        comparison_rows: list[MethodComparisonRow],
+    ) -> list[dict[str, object]]:
+        paper_map = {paper.paper_id: paper for paper in papers}
+        analysis_map = {analysis.paper_id: analysis for analysis in analyses}
+        row_map = {row.paper_id: row for row in comparison_rows}
+        payload: list[dict[str, object]] = []
+        for paper_id in ordered_ids:
+            paper = paper_map.get(paper_id)
+            analysis = analysis_map.get(paper_id)
+            row = row_map.get(paper_id)
+            if paper is None or analysis is None:
+                continue
+            payload.append(
+                {
+                    "paper_id": paper_id,
+                    "title": paper.title,
+                    "year": paper.year,
+                    "model_type": row.model_type if row else None,
+                    "core_claim": analysis.core_claim,
+                    "methodology": analysis.methodology,
+                    "datasets": analysis.datasets,
+                    "metrics": analysis.metrics,
+                    "benchmarks": analysis.benchmarks,
+                    "limitations": analysis.limitations,
+                }
+            )
+        return payload
+
+    @staticmethod
+    def _build_cluster_edge_payload(citation_graph: CitationGraph | None) -> list[dict[str, str]]:
+        if citation_graph is None:
+            return []
+        return [
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "relation": edge.relation.value,
+                "evidence_level": edge.evidence_level.value,
+            }
+            for edge in citation_graph.edges
+        ]
 
     def _build_lineage_lines(
         self,
@@ -237,7 +407,7 @@ class SurveyService:
         paper_map: dict[str, CuratedPaper],
     ) -> list[str]:
         if citation_graph is None:
-            return ["- No citation graph was available for this theme."]
+            return ["No citation graph was available for this theme."]
         cluster_set = set(paper_ids)
         lines: list[str] = []
         for edge in citation_graph.edges:
@@ -248,48 +418,11 @@ class SurveyService:
             source_title = paper_map.get(edge.source).title if paper_map.get(edge.source) else edge.source
             target_title = paper_map.get(edge.target).title if paper_map.get(edge.target) else edge.target
             lines.append(
-                f"- {source_title} {edge.relation.value.replace('_', ' ')} {target_title} "
-                f"({edge.evidence_level.value} evidence)."
+                f"{source_title} {edge.relation.value.replace('_', ' ')} {target_title} ({edge.evidence_level.value} evidence)."
             )
         if not lines:
-            return ["- No strong within-cluster lineage was identified; the papers are grouped primarily by thematic similarity."]
-        return lines[:5]
-
-    def _build_open_problem_lines(
-        self,
-        limitation_pool: list[str],
-        analyses: list[PaperAnalysis],
-        cluster_paper_ids: list[str],
-    ) -> list[str]:
-        cluster_set = set(cluster_paper_ids)
-        limitations = []
-        for limitation in limitation_pool:
-            normalized = limitation.strip()
-            if normalized and normalized not in limitations:
-                limitations.append(normalized)
-        if limitations:
-            return [f"- {limitation}" for limitation in limitations[:3]]
-
-        datasets = sorted(
-            {
-                dataset
-                for analysis in analyses
-                if analysis.paper_id in cluster_set
-                for dataset in analysis.datasets
-            }
-        )
-        metrics = sorted(
-            {
-                metric
-                for analysis in analyses
-                if analysis.paper_id in cluster_set
-                for metric in analysis.metrics
-            }
-        )
-        return [
-            f"- Evaluate the theme on a broader dataset set than {', '.join(datasets[:3]) or 'the currently extracted benchmarks'}.",
-            f"- Standardize reporting beyond {', '.join(metrics[:3]) or 'the extracted metrics'} to make cross-paper comparison easier.",
-        ]
+            return ["No strong within-cluster lineage was identified; the papers are grouped primarily by thematic similarity."]
+        return lines[:6]
 
     def _render_method_comparison_markdown(self, rows: list[MethodComparisonRow]) -> str:
         header = "| Paper | Quality | Model | Datasets | Metrics | Limitation |\n| --- | --- | --- | --- | --- | --- |"
@@ -302,22 +435,21 @@ class SurveyService:
         return "\n".join([header, *body]) if body else f"{header}\n| No analyzed papers | - | - | - | - | - |"
 
     @staticmethod
-    def _count_internal_edges(citation_graph: CitationGraph | None, paper_ids: set[str]) -> int:
-        if citation_graph is None:
-            return 0
-        return sum(
-            1
-            for edge in citation_graph.edges
-            if edge.source in paper_ids and edge.target in paper_ids
-        )
-
-    @staticmethod
-    def _format_cluster_title(label: str) -> str:
-        if label == "general methods":
-            return "General Method Directions"
-        if label.endswith("dataset") or label.endswith("datasets"):
-            return f"{label.title()} Evaluations"
-        return f"{label.title()} Theme"
+    def _normalize_strings(values: list[str], *, limit: int | None = None) -> list[str]:
+        seen: set[str] = set()
+        normalized_values: list[str] = []
+        for value in values:
+            cleaned = " ".join(value.split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_values.append(cleaned)
+            if limit is not None and len(normalized_values) >= limit:
+                break
+        return normalized_values
 
     @staticmethod
     def _slugify(value: str) -> str:

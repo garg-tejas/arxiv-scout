@@ -24,6 +24,10 @@ class ThemeCluster(BaseModel):
     paper_ids: list[str] = Field(default_factory=list)
 
 
+class ThemeClusterBatch(BaseModel):
+    clusters: list[ThemeCluster] = Field(default_factory=list)
+
+
 class SurveySection(BaseModel):
     section_id: str
     title: str
@@ -33,10 +37,20 @@ class SurveySection(BaseModel):
     accepted: bool = False
 
 
+class SurveySectionDraft(BaseModel):
+    title: str
+    content_markdown: str
+
+
 class SectionReviewResult(BaseModel):
     verdict: ReviewVerdict
     feedback: str
     revision_count: int = 0
+
+
+class SurveyAssemblyDraft(BaseModel):
+    introduction: str | None = None
+    conclusion: str | None = None
 
 
 class SurveyDocument(BaseModel):

@@ -605,7 +605,7 @@ class SessionService:
             )
             return snapshot
 
-        survey_brief = brief or self.survey_service.synthesize_brief(snapshot)
+        survey_brief = brief or await self.survey_service.synthesize_brief(snapshot)
         try:
             return await self._run_survey_pipeline(
                 snapshot,
@@ -684,7 +684,7 @@ class SessionService:
                 )
                 updated_sections.append(regenerated)
 
-            final_document = self.survey_service.assemble_document(
+            final_document = await self.survey_service.assemble_document(
                 brief=snapshot.survey_brief,
                 sections=updated_sections,
                 comparison_rows=snapshot.method_comparison_table,
@@ -896,7 +896,7 @@ class SessionService:
             )
         )
 
-        clusters = self.survey_service.cluster_themes(
+        clusters = await self.survey_service.cluster_themes(
             brief=survey_brief,
             papers=selected_papers,
             analyses=snapshot.paper_analyses,
@@ -929,7 +929,7 @@ class SessionService:
             )
             sections.append(section)
 
-        final_document = self.survey_service.assemble_document(
+        final_document = await self.survey_service.assemble_document(
             brief=survey_brief,
             sections=sections,
             comparison_rows=snapshot.method_comparison_table,
@@ -1092,8 +1092,6 @@ class SessionService:
         if snapshot.current_checkpoint != CheckpointType.SHORTLIST_REVIEW:
             raise SessionTransitionError("Session is not waiting at shortlist review.")
 
-        return values
-
     @staticmethod
     def _resolve_approved_paper_details(
         snapshot: SessionSnapshot,
@@ -1158,17 +1156,17 @@ class SessionService:
         current_feedback = revision_feedback
         current_revision_count = revision_count
         while True:
-            section = self.survey_service.draft_section(
+            section = await self.survey_service.draft_section(
                 cluster=cluster,
                 papers=papers,
                 analyses=snapshot.paper_analyses,
                 comparison_rows=snapshot.method_comparison_table,
-                brief=snapshot.survey_brief or self.survey_service.synthesize_brief(snapshot),
+                brief=snapshot.survey_brief or await self.survey_service.synthesize_brief(snapshot),
                 citation_graph=snapshot.citation_graph,
                 revision_feedback=current_feedback,
                 revision_count=current_revision_count,
             )
-            review = self.survey_service.review_section(section=section, cluster=cluster)
+            review = await self.survey_service.review_section(section=section, cluster=cluster)
             if review.verdict.value == "ACCEPT" or current_revision_count >= 2:
                 section.accepted = True
                 await self.stream_service.publish(
