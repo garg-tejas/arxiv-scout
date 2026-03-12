@@ -1166,7 +1166,11 @@ class SessionService:
                 revision_feedback=current_feedback,
                 revision_count=current_revision_count,
             )
-            review = await self.survey_service.review_section(section=section, cluster=cluster)
+            review = await self.survey_service.review_section(
+                section=section,
+                cluster=cluster,
+                brief=snapshot.survey_brief or await self.survey_service.synthesize_brief(snapshot),
+            )
             if review.verdict.value == "ACCEPT" or current_revision_count >= 2:
                 section.accepted = True
                 await self.stream_service.publish(

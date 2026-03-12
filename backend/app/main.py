@@ -37,7 +37,6 @@ async def lifespan(app: FastAPI):
 
     artifact_service = ArtifactService()
     revision_service = RevisionService()
-    survey_service = SurveyService()
     semantic_scholar_client = SemanticScholarClient(
         base_url=settings.semantic_scholar_base_url,
         api_key=settings.semantic_scholar_api_key,
@@ -64,6 +63,7 @@ async def lifespan(app: FastAPI):
         gemini_client=gemini_client,
         max_retries=settings.llm_max_retries,
     )
+    survey_service = SurveyService(llm_router=llm_router)
     analysis_service = AnalysisService(
         firecrawl_client=firecrawl_client,
         llm_router=llm_router,
