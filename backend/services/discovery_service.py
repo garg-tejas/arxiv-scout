@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-from graph.discovery import interpret_topic
 from integrations.arxiv import ArxivClient
 from integrations.llm import LLMRouter
 from integrations.semantic_scholar import SemanticScholarClient
@@ -29,7 +28,49 @@ class DiscoveryService:
         self.shortlist_size = shortlist_size
 
     async def interpret_topic(self, topic: str) -> SearchInterpretation:
-        return await interpret_topic(topic, self.llm_router)
+        normalized_topic = " ".join(topic.split()).strip()
+        interpretation = await self.llm_router.generate_structured(
+            role=LLMRole.SEARCH,
+            system_prompt=(
+                "You are the Search Agent for an arXiv literature scout. "
+                "Interpret the user's research topic into a normalized topic string and 3 to 4 semantically distinct "
+                "search angles. Return JSON only. Keep search angles concise, diverse, and arXiv-paper oriented."
+            ),
+            user_prompt=(
+                f"User topic:\n{normalized_topic}\n\n"
+                "Requirements:\n"
+                "- normalized_topic should be a cleaned-up restatement of the topic\n"
+                "- search_angles must contain 3 or 4 distinct strings\n"
+                "- angles should emphasize different retrieval views such as method family, benchmark/evaluation, "
+                "application area, or limitations/tradeoffs\n"
+                "- do not include numbering or commentary"
+            ),
+            schema_type=SearchInterpretation,
+        )
+        return self._finalize_interpretation(interpretation)
+
+    @staticmethod
+    def _finalize_interpretation(interpretation: SearchInterpretation) -> SearchInterpretation:
+        normalized_topic = " ".join((interpretation.normalized_topic or "").split()).strip()
+        seen: set[str] = set()
+        search_angles: list[str] = []
+        for angle in interpretation.search_angles:
+            cleaned = " ".join(angle.split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            search_angles.append(cleaned)
+
+        if not normalized_topic or len(search_angles) < 3 or len(search_angles) > 4:
+            raise ValueError("LLM topic interpretation did not return 3-4 distinct search angles.")
+
+        return SearchInterpretation(
+            normalized_topic=normalized_topic,
+            search_angles=search_angles,
+        )
 
     async def merge_steering_preferences(
         self,
@@ -75,17 +116,14 @@ class DiscoveryService:
         steering_preferences: SteeringPreferences | None = None,
     ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
         preferences = steering_preferences or SteeringPreferences()
-        raw_candidates: list[dict] = []
-        for angle in self._build_queries(interpretation, preferences):
-            raw_candidates.extend(
-                await self.semantic_scholar_client.search(angle, limit=self.results_per_angle)
-            )
-
-        enriched_candidates = await self._enrich_and_filter(raw_candidates)
+        enriched_candidates = await self.fetch_candidates(
+            interpretation=interpretation,
+            steering_preferences=preferences,
+        )
         if not enriched_candidates:
             return [], []
 
-        curated, method_table = await self._curate(
+        curated, method_table = await self.curate_shortlist(
             topic=topic,
             interpretation=interpretation,
             papers=enriched_candidates,
@@ -95,6 +133,34 @@ class DiscoveryService:
         row_by_id = {row.paper_id: row for row in method_table}
         ordered_rows = [row_by_id[paper.paper_id] for paper in shortlist if paper.paper_id in row_by_id]
         return shortlist, ordered_rows
+
+    async def fetch_candidates(
+        self,
+        *,
+        interpretation: SearchInterpretation,
+        steering_preferences: SteeringPreferences,
+    ) -> list[PaperMetadata]:
+        raw_candidates: list[dict] = []
+        for angle in self._build_queries(interpretation, steering_preferences):
+            raw_candidates.extend(
+                await self.semantic_scholar_client.search(angle, limit=self.results_per_angle)
+            )
+        return await self._enrich_and_filter(raw_candidates)
+
+    async def curate_shortlist(
+        self,
+        *,
+        topic: str,
+        interpretation: SearchInterpretation,
+        papers: list[PaperMetadata],
+        steering_preferences: SteeringPreferences,
+    ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
+        return await self._curate(
+            topic=topic,
+            interpretation=interpretation,
+            papers=papers,
+            steering_preferences=steering_preferences,
+        )
 
     async def _enrich_and_filter(self, raw_candidates: list[dict]) -> list[PaperMetadata]:
         deduped: dict[str, PaperMetadata] = {}

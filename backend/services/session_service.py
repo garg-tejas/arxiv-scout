@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
+from graph.commands import GraphCommand
 from models.analysis import AnalysisSummary
 from models.discovery import SteeringPreferences
 from models.enums import (
@@ -51,6 +52,7 @@ class SessionService:
         survey_service: SurveyService,
         ttl_days: int,
         analysis_paper_cap: int,
+        discovery_graph: object,
     ) -> None:
         self.session_store = session_store
         self.artifact_service = artifact_service
@@ -62,6 +64,7 @@ class SessionService:
         self.survey_service = survey_service
         self.ttl_days = ttl_days
         self.analysis_paper_cap = analysis_paper_cap
+        self.discovery_graph = discovery_graph
         self.checkpoints = GraphCheckpointStore(session_store)
 
     async def create_session(self) -> SessionSnapshot:
@@ -153,7 +156,16 @@ class SessionService:
         )
 
         try:
-            interpretation = await self.discovery_service.interpret_topic(snapshot.topic)
+            state = await self.discovery_graph.ainvoke(
+                {
+                    "session_id": session_id,
+                    "command": GraphCommand.START_TOPIC.value,
+                    "topic": snapshot.topic,
+                },
+                config={"configurable": {"thread_id": session_id}},
+            )
+            interpretation = state.get("search_interpretation")
+            pending_interrupt = state.get("pending_interrupt")
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
@@ -176,7 +188,7 @@ class SessionService:
         snapshot.search_interpretation = interpretation
         snapshot.status = SessionStatus.WAITING_FOR_INPUT
         snapshot.current_checkpoint = CheckpointType.TOPIC_CONFIRMATION
-        snapshot.pending_interrupt = PendingInterrupt(
+        snapshot.pending_interrupt = pending_interrupt or PendingInterrupt(
             checkpoint=CheckpointType.TOPIC_CONFIRMATION,
             message="Confirm the interpreted topic and search angles before paper fetch.",
             expected_action_types=[AllowedAction.CONFIRM_TOPIC],
@@ -243,11 +255,98 @@ class SessionService:
                 data={"topic": snapshot.topic},
             )
         )
+        try:
+            state = await self.discovery_graph.ainvoke(
+                {
+                    "session_id": session_id,
+                    "command": GraphCommand.CONFIRM_TOPIC.value,
+                },
+                config={"configurable": {"thread_id": session_id}},
+            )
+        except Exception as exc:
+            snapshot.status = SessionStatus.ERROR
+            snapshot.current_checkpoint = CheckpointType.NONE
+            snapshot.pending_interrupt = None
+            snapshot.allowed_actions = []
+            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.FAILED
+            snapshot.last_updated_at = utc_now()
+            await self._persist_snapshot(snapshot)
+            await self.stream_service.publish(
+                StreamEvent(
+                    session_id=snapshot.session_id,
+                    event_type=StreamEventType.ERROR,
+                    phase=PhaseType.DISCOVERY,
+                    message="Discovery fetch failed.",
+                    data={"error": str(exc)},
+                )
+            )
+            raise SessionExecutionError("Discovery fetch failed.") from exc
 
-        return await self._rerun_discovery_shortlist(
-            snapshot,
-            reason_message="Curated shortlist is ready for review.",
+        snapshot.latest_shortlist = list(state.get("latest_shortlist") or [])
+        snapshot.preliminary_method_table = list(state.get("preliminary_method_table") or [])
+        snapshot.status = SessionStatus.WAITING_FOR_INPUT
+        snapshot.current_phase = PhaseType.DISCOVERY
+        snapshot.current_checkpoint = CheckpointType.SHORTLIST_REVIEW
+        snapshot.pending_interrupt = state.get("pending_interrupt") or PendingInterrupt(
+            checkpoint=CheckpointType.SHORTLIST_REVIEW,
+            message="Review the curated shortlist, replace the approved-paper set, or steer discovery with a nudge.",
+            expected_action_types=[
+                AllowedAction.UPDATE_APPROVED_PAPERS,
+                AllowedAction.NUDGE_DISCOVERY,
+                AllowedAction.START_ANALYSIS,
+            ],
         )
+        snapshot.allowed_actions = [
+            AllowedAction.UPDATE_APPROVED_PAPERS,
+            AllowedAction.NUDGE_DISCOVERY,
+            AllowedAction.START_ANALYSIS,
+        ]
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.last_updated_at = utc_now()
+
+        await self._persist_snapshot(snapshot)
+        await self.checkpoints.save(
+            session_id=snapshot.session_id,
+            phase=PhaseType.DISCOVERY.value,
+            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
+            state=snapshot.model_dump(mode="json"),
+            saved_at=snapshot.last_updated_at,
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.SHORTLIST,
+                message="Curated shortlist is ready for review.",
+                data={"papers": [paper.model_dump(mode="json") for paper in snapshot.latest_shortlist]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.PRELIMINARY_METHOD_TABLE,
+                message="Preliminary method extraction table is ready.",
+                data={"rows": [row.model_dump(mode="json") for row in snapshot.preliminary_method_table]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.INTERRUPT,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                message=snapshot.pending_interrupt.message,
+                data=snapshot.pending_interrupt.model_dump(mode="json"),
+            )
+        )
+        return snapshot
 
     async def update_approved_papers(
         self,
@@ -274,7 +373,15 @@ class SessionService:
             deduped_ids.append(normalized)
 
         snapshot.approved_papers = deduped_ids
-        snapshot.approved_paper_details = self._resolve_approved_paper_details(snapshot, deduped_ids)
+        await self.discovery_graph.aupdate_state(
+            config={"configurable": {"thread_id": session_id}},
+            values={"approved_papers": deduped_ids},
+            as_node="store_approved_papers",
+        )
+        graph_state = await self.discovery_graph.aget_state({"configurable": {"thread_id": session_id}})
+        values = graph_state.values if graph_state else {}
+        snapshot.approved_papers = list(values.get("approved_papers") or deduped_ids)
+        snapshot.approved_paper_details = list(values.get("approved_paper_details") or [])
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.checkpoints.save(
@@ -803,12 +910,17 @@ class SessionService:
             raise SessionTransitionError("Session is missing discovery context for rerunning the shortlist.")
 
         try:
-            snapshot.steering_preferences = await self.discovery_service.merge_steering_preferences(
-                current=snapshot.steering_preferences,
-                nudge_text=text,
+            state = await self.discovery_graph.ainvoke(
+                {
+                    "session_id": session_id,
+                    "command": GraphCommand.NUDGE_DISCOVERY.value,
+                    "nudge_text": text,
+                },
+                config={"configurable": {"thread_id": session_id}},
             )
         except Exception as exc:
             raise SessionExecutionError("Discovery steering merge failed.") from exc
+        snapshot.steering_preferences = state.get("steering_preferences") or snapshot.steering_preferences
         snapshot.status = SessionStatus.RUNNING
         snapshot.current_phase = PhaseType.DISCOVERY
         snapshot.current_checkpoint = CheckpointType.NONE
@@ -831,10 +943,70 @@ class SessionService:
                 },
             )
         )
-        return await self._rerun_discovery_shortlist(
-            snapshot,
-            reason_message="Updated shortlist is ready after applying the steering nudge.",
+        snapshot.latest_shortlist = list(state.get("latest_shortlist") or [])
+        snapshot.preliminary_method_table = list(state.get("preliminary_method_table") or [])
+        snapshot.status = SessionStatus.WAITING_FOR_INPUT
+        snapshot.current_phase = PhaseType.DISCOVERY
+        snapshot.current_checkpoint = CheckpointType.SHORTLIST_REVIEW
+        snapshot.pending_interrupt = state.get("pending_interrupt") or PendingInterrupt(
+            checkpoint=CheckpointType.SHORTLIST_REVIEW,
+            message="Review the curated shortlist, replace the approved-paper set, or steer discovery with a nudge.",
+            expected_action_types=[
+                AllowedAction.UPDATE_APPROVED_PAPERS,
+                AllowedAction.NUDGE_DISCOVERY,
+                AllowedAction.START_ANALYSIS,
+            ],
         )
+        snapshot.allowed_actions = [
+            AllowedAction.UPDATE_APPROVED_PAPERS,
+            AllowedAction.NUDGE_DISCOVERY,
+            AllowedAction.START_ANALYSIS,
+        ]
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.last_updated_at = utc_now()
+
+        await self._persist_snapshot(snapshot)
+        await self.checkpoints.save(
+            session_id=snapshot.session_id,
+            phase=PhaseType.DISCOVERY.value,
+            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
+            state=snapshot.model_dump(mode="json"),
+            saved_at=snapshot.last_updated_at,
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.SHORTLIST,
+                message="Updated shortlist is ready after applying the steering nudge.",
+                data={"papers": [paper.model_dump(mode="json") for paper in snapshot.latest_shortlist]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.ARTIFACT_READY,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                artifact_type=ArtifactType.PRELIMINARY_METHOD_TABLE,
+                message="Preliminary method extraction table is ready.",
+                data={"rows": [row.model_dump(mode="json") for row in snapshot.preliminary_method_table]},
+            )
+        )
+        await self.stream_service.publish(
+            StreamEvent(
+                session_id=snapshot.session_id,
+                event_type=StreamEventType.INTERRUPT,
+                phase=PhaseType.DISCOVERY,
+                checkpoint=CheckpointType.SHORTLIST_REVIEW,
+                message=snapshot.pending_interrupt.message,
+                data=snapshot.pending_interrupt.model_dump(mode="json"),
+            )
+        )
+        return snapshot
 
     async def _persist_snapshot(self, snapshot: SessionSnapshot) -> None:
         expires_at = snapshot.last_updated_at + timedelta(days=self.ttl_days)

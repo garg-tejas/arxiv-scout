@@ -38,6 +38,7 @@ class ServiceContainer:
     revision_service: RevisionService
     survey_service: SurveyService
     session_service: SessionService
+    discovery_graph: object
     supervisor_graph: object
 
 
