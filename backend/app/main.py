@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.dependencies import ServiceContainer
 from app.routes import sessions
+from graph.analysis import build_analysis_graph
 from graph.discovery import build_discovery_graph
 from graph.supervisor import build_supervisor_graph
 from integrations.arxiv import ArxivClient
@@ -83,6 +84,13 @@ async def lifespan(app: FastAPI):
         session_store=session_store,
         heartbeat_seconds=settings.sse_heartbeat_seconds,
     )
+    discovery_graph = build_discovery_graph(discovery_service=discovery_service)
+    analysis_graph = build_analysis_graph(
+        analysis_service=analysis_service,
+        citation_graph_service=citation_graph_service,
+        artifact_service=artifact_service,
+        stream_service=stream_service,
+    )
     session_service = SessionService(
         session_store=session_store,
         artifact_service=artifact_service,
@@ -94,7 +102,8 @@ async def lifespan(app: FastAPI):
         survey_service=survey_service,
         ttl_days=settings.session_ttl_days,
         analysis_paper_cap=settings.analysis_paper_cap,
-        discovery_graph=build_discovery_graph(discovery_service=discovery_service),
+        discovery_graph=discovery_graph,
+        analysis_graph=analysis_graph,
     )
 
     app.state.services = ServiceContainer(
@@ -113,7 +122,8 @@ async def lifespan(app: FastAPI):
         revision_service=revision_service,
         survey_service=survey_service,
         session_service=session_service,
-        discovery_graph=session_service.discovery_graph,
+        discovery_graph=discovery_graph,
+        analysis_graph=analysis_graph,
         supervisor_graph=build_supervisor_graph(),
     )
 

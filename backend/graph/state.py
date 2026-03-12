@@ -19,3 +19,9 @@ class AppGraphState(TypedDict, total=False):
 
     approved_papers: list[str]
     approved_paper_details: list[object]
+
+    selected_papers: list[object]
+    paper_analyses: list[object]
+    degraded_paper_ids: list[str]
+    citation_graph: object
+    method_comparison_table: list[object]

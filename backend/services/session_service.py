@@ -53,6 +53,7 @@ class SessionService:
         ttl_days: int,
         analysis_paper_cap: int,
         discovery_graph: object,
+        analysis_graph: object,
     ) -> None:
         self.session_store = session_store
         self.artifact_service = artifact_service
@@ -65,6 +66,7 @@ class SessionService:
         self.ttl_days = ttl_days
         self.analysis_paper_cap = analysis_paper_cap
         self.discovery_graph = discovery_graph
+        self.analysis_graph = analysis_graph
         self.checkpoints = GraphCheckpointStore(session_store)
 
     async def create_session(self) -> SessionSnapshot:
@@ -516,24 +518,14 @@ class SessionService:
             )
         )
 
-        degraded_ids: list[str] = []
-        analyses = []
         try:
-            for paper in selected_papers:
-                analysis = await self.analysis_service.analyze_paper(paper)
-                analyses.append(analysis)
-                if analysis.analysis_quality.value != "full_text":
-                    degraded_ids.append(analysis.paper_id)
-                await self.stream_service.publish(
-                    StreamEvent(
-                        session_id=session_id,
-                        event_type=StreamEventType.ARTIFACT_READY,
-                        phase=PhaseType.ANALYSIS,
-                        artifact_type=ArtifactType.PAPER_ANALYSIS,
-                        message=f"Analysis ready for {paper.title}.",
-                        data=analysis.model_dump(mode="json"),
-                    )
-                )
+            state = await self.analysis_graph.ainvoke(
+                {
+                    "session_id": session_id,
+                    "selected_papers": [paper.model_dump(mode="json") for paper in selected_papers],
+                },
+                config={"configurable": {"thread_id": session_id}},
+            )
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
@@ -554,49 +546,17 @@ class SessionService:
                     session_id=session_id,
                     event_type=StreamEventType.ERROR,
                     phase=PhaseType.ANALYSIS,
-                    message="Paper analysis failed.",
+                    message="Analysis pipeline failed.",
                     data={"error": str(exc), "selected_paper_ids": selected_ids},
                 )
             )
-            raise SessionExecutionError("Paper analysis failed.") from exc
+            raise SessionExecutionError("Analysis pipeline failed.") from exc
 
-        try:
-            citation_graph = await self.citation_graph_service.build_graph(
-                seed_papers=selected_papers,
-                analyses=analyses,
-            )
-        except Exception as exc:
-            snapshot.paper_analyses = analyses
-            snapshot.status = SessionStatus.ERROR
-            snapshot.current_checkpoint = CheckpointType.NONE
-            snapshot.pending_interrupt = None
-            snapshot.allowed_actions = []
-            snapshot.analysis_summary.completed = False
-            snapshot.analysis_summary.degraded_paper_ids = degraded_ids
-            snapshot.analysis_summary.comparison_row_count = 0
-            snapshot.analysis_summary.retained_context_node_count = 0
-            snapshot.analysis_summary.lineage_path_count = 0
-            snapshot.analysis_summary.citation_graph_summary = None
-            snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
-            snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
-            snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.FAILED
-            snapshot.last_updated_at = utc_now()
-            await self._persist_snapshot(snapshot)
-            await self.stream_service.publish(
-                StreamEvent(
-                    session_id=session_id,
-                    event_type=StreamEventType.ERROR,
-                    phase=PhaseType.ANALYSIS,
-                    message="Citation graph construction failed.",
-                    data={"error": str(exc), "selected_paper_ids": selected_ids},
-                )
-            )
-            raise SessionExecutionError("Citation graph construction failed.") from exc
+        degraded_ids = list(state.get("degraded_paper_ids") or [])
+        analyses = [analysis for analysis in state.get("paper_analyses") or []]
+        citation_graph = state.get("citation_graph")
+        method_comparison_table = [row for row in state.get("method_comparison_table") or []]
 
-        method_comparison_table = self.artifact_service.build_method_comparison_table(
-            papers=selected_papers,
-            analyses=analyses,
-        )
         snapshot.paper_analyses = analyses
         snapshot.method_comparison_table = method_comparison_table
         snapshot.citation_graph = citation_graph
