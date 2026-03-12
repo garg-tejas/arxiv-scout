@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from graph.checkpoint import get_sqlite_checkpointer
 from graph.state import AppGraphState
 from models.analysis import PaperAnalysis
 from models.citation import CitationGraph
@@ -121,4 +121,4 @@ def build_analysis_graph(
     workflow.add_edge("build_citation_graph", "build_method_comparison_table")
     workflow.add_edge("build_method_comparison_table", END)
 
-    return workflow.compile(checkpointer=InMemorySaver())
+    return workflow.compile(checkpointer=get_sqlite_checkpointer())

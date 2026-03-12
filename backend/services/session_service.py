@@ -19,7 +19,6 @@ from models.events import StreamEvent
 from models.papers import CuratedPaper
 from models.session import PendingInterrupt, SessionSnapshot, utc_now
 from models.survey import SurveyBrief, SurveyRevisionRequest, SurveySummary
-from persistence.checkpoints import GraphCheckpointStore
 from persistence.session_store import SessionStore
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
@@ -69,7 +68,6 @@ class SessionService:
         self.discovery_graph = discovery_graph
         self.analysis_graph = analysis_graph
         self.survey_graph = survey_graph
-        self.checkpoints = GraphCheckpointStore(session_store)
 
     async def create_session(self) -> SessionSnapshot:
         now = utc_now()
@@ -87,7 +85,6 @@ class SessionService:
         expires_at = now + timedelta(days=self.ttl_days)
 
         await self.session_store.create_session(snapshot, created_at=now, expires_at=expires_at)
-        await self.checkpoints.bootstrap_session(session_id, now)
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
@@ -202,13 +199,6 @@ class SessionService:
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=session_id,
-            phase=PhaseType.DISCOVERY.value,
-            checkpoint_key=CheckpointType.TOPIC_CONFIRMATION.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
 
         await self.stream_service.publish(
             StreamEvent(
@@ -311,13 +301,6 @@ class SessionService:
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=snapshot.session_id,
-            phase=PhaseType.DISCOVERY.value,
-            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -388,13 +371,6 @@ class SessionService:
         snapshot.approved_paper_details = list(values.get("approved_paper_details") or [])
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=session_id,
-            phase=PhaseType.DISCOVERY.value,
-            checkpoint_key="approved_papers_updated",
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
@@ -441,13 +417,6 @@ class SessionService:
             snapshot.analysis_summary.citation_graph_summary = None
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
-            await self.checkpoints.save(
-                session_id=session_id,
-                phase=PhaseType.ANALYSIS.value,
-                checkpoint_key=CheckpointType.ANALYSIS_SELECTION.value,
-                state=snapshot.model_dump(mode="json"),
-                saved_at=snapshot.last_updated_at,
-            )
             await self.stream_service.publish(
                 StreamEvent(
                     session_id=session_id,
@@ -579,13 +548,6 @@ class SessionService:
         snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.READY
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=session_id,
-            phase=PhaseType.ANALYSIS.value,
-            checkpoint_key="analysis_completed",
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
@@ -655,13 +617,6 @@ class SessionService:
             ]
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
-            await self.checkpoints.save(
-                session_id=session_id,
-                phase=PhaseType.SURVEY.value,
-                checkpoint_key=CheckpointType.SURVEY_BRIEF.value,
-                state=snapshot.model_dump(mode="json"),
-                saved_at=snapshot.last_updated_at,
-            )
             await self.stream_service.publish(
                 StreamEvent(
                     session_id=session_id,
@@ -785,13 +740,6 @@ class SessionService:
         snapshot.allowed_actions = [AllowedAction.DOWNLOAD_SURVEY_MARKDOWN]
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=session_id,
-            phase=PhaseType.SURVEY.value,
-            checkpoint_key="survey_approved",
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
@@ -877,13 +825,6 @@ class SessionService:
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=snapshot.session_id,
-            phase=PhaseType.DISCOVERY.value,
-            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -1042,13 +983,6 @@ class SessionService:
         snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=snapshot.session_id,
-            phase=PhaseType.SURVEY.value,
-            checkpoint_key=CheckpointType.SURVEY_REVIEW.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -1128,13 +1062,6 @@ class SessionService:
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=snapshot.session_id,
-            phase=PhaseType.DISCOVERY.value,
-            checkpoint_key=CheckpointType.SHORTLIST_REVIEW.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -1270,13 +1197,6 @@ class SessionService:
         snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
-        await self.checkpoints.save(
-            session_id=snapshot.session_id,
-            phase=PhaseType.SURVEY.value,
-            checkpoint_key=CheckpointType.SURVEY_REVIEW.value,
-            state=snapshot.model_dump(mode="json"),
-            saved_at=snapshot.last_updated_at,
-        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,

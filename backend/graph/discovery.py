@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from graph.checkpoint import get_sqlite_checkpointer
 from graph.state import AppGraphState
 from graph.commands import GraphCommand
 from models.discovery import SteeringPreferences
@@ -221,4 +221,4 @@ def build_discovery_graph(*, discovery_service: DiscoveryService):
     workflow.add_edge("store_approved_papers", END)
 
     workflow.add_edge(START, "command_router")
-    return workflow.compile(checkpointer=InMemorySaver())
+    return workflow.compile(checkpointer=get_sqlite_checkpointer())

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from graph.checkpoint import get_sqlite_checkpointer
 from graph.state import AppGraphState
 from models.enums import ArtifactType, PhaseType, StreamEventType
 from models.papers import CuratedPaper
@@ -235,4 +235,4 @@ def build_survey_graph(
     )
     workflow.add_edge("assemble_survey", END)
 
-    return workflow.compile(checkpointer=InMemorySaver())
+    return workflow.compile(checkpointer=get_sqlite_checkpointer())
