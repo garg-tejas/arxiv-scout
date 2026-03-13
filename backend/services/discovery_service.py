@@ -50,8 +50,12 @@ class DiscoveryService:
         return self._finalize_interpretation(interpretation)
 
     @staticmethod
-    def _finalize_interpretation(interpretation: SearchInterpretation) -> SearchInterpretation:
-        normalized_topic = " ".join((interpretation.normalized_topic or "").split()).strip()
+    def _finalize_interpretation(
+        interpretation: SearchInterpretation,
+    ) -> SearchInterpretation:
+        normalized_topic = " ".join(
+            (interpretation.normalized_topic or "").split()
+        ).strip()
         seen: set[str] = set()
         search_angles: list[str] = []
         for angle in interpretation.search_angles:
@@ -65,7 +69,9 @@ class DiscoveryService:
             search_angles.append(cleaned)
 
         if not normalized_topic or len(search_angles) < 3 or len(search_angles) > 4:
-            raise ValueError("LLM topic interpretation did not return 3-4 distinct search angles.")
+            raise ValueError(
+                "LLM topic interpretation did not return 3-4 distinct search angles."
+            )
 
         return SearchInterpretation(
             normalized_topic=normalized_topic,
@@ -108,32 +114,6 @@ class DiscoveryService:
         )
         return self._normalize_preferences(merged)
 
-    async def build_shortlist(
-        self,
-        *,
-        topic: str,
-        interpretation: SearchInterpretation,
-        steering_preferences: SteeringPreferences | None = None,
-    ) -> tuple[list[CuratedPaper], list[MethodExtractionRow]]:
-        preferences = steering_preferences or SteeringPreferences()
-        enriched_candidates = await self.fetch_candidates(
-            interpretation=interpretation,
-            steering_preferences=preferences,
-        )
-        if not enriched_candidates:
-            return [], []
-
-        curated, method_table = await self.curate_shortlist(
-            topic=topic,
-            interpretation=interpretation,
-            papers=enriched_candidates,
-            steering_preferences=preferences,
-        )
-        shortlist = curated[: self.shortlist_size]
-        row_by_id = {row.paper_id: row for row in method_table}
-        ordered_rows = [row_by_id[paper.paper_id] for paper in shortlist if paper.paper_id in row_by_id]
-        return shortlist, ordered_rows
-
     async def fetch_candidates(
         self,
         *,
@@ -143,7 +123,9 @@ class DiscoveryService:
         raw_candidates: list[dict] = []
         for angle in self._build_queries(interpretation, steering_preferences):
             raw_candidates.extend(
-                await self.semantic_scholar_client.search(angle, limit=self.results_per_angle)
+                await self.semantic_scholar_client.search(
+                    angle, limit=self.results_per_angle
+                )
             )
         return await self._enrich_and_filter(raw_candidates)
 
@@ -162,7 +144,9 @@ class DiscoveryService:
             steering_preferences=steering_preferences,
         )
 
-    async def _enrich_and_filter(self, raw_candidates: list[dict]) -> list[PaperMetadata]:
+    async def _enrich_and_filter(
+        self, raw_candidates: list[dict]
+    ) -> list[PaperMetadata]:
         deduped: dict[str, PaperMetadata] = {}
         for candidate in raw_candidates:
             paper = await self._to_paper_metadata(candidate)
@@ -180,7 +164,9 @@ class DiscoveryService:
 
         enriched = await self.arxiv_client.resolve_metadata(arxiv_id)
         authors = candidate.get("authors") or []
-        author_models = [Author(name=author.get("name", "Unknown")) for author in authors]
+        author_models = [
+            Author(name=author.get("name", "Unknown")) for author in authors
+        ]
 
         paper = PaperMetadata(
             paper_id=candidate.get("paperId") or arxiv_id,
@@ -196,7 +182,9 @@ class DiscoveryService:
             paper.title = enriched.get("title") or paper.title
             paper.abstract = enriched.get("abstract") or paper.abstract
             if enriched.get("authors"):
-                paper.authors = [Author.model_validate(author) for author in enriched["authors"]]
+                paper.authors = [
+                    Author.model_validate(author) for author in enriched["authors"]
+                ]
             paper.year = enriched.get("year") or paper.year
         return paper
 
@@ -323,7 +311,9 @@ class DiscoveryService:
         )
         shortlisted_papers = curated[: self.shortlist_size]
         shortlisted_ids = {paper.paper_id for paper in shortlisted_papers}
-        shortlisted_rows = [row for row in method_rows if row.paper_id in shortlisted_ids]
+        shortlisted_rows = [
+            row for row in method_rows if row.paper_id in shortlisted_ids
+        ]
         return shortlisted_papers, shortlisted_rows
 
     @staticmethod

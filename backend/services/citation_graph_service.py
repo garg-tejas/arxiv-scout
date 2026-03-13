@@ -37,15 +37,17 @@ class CitationGraphService:
 
         contexts_by_seed: dict[str, dict] = {}
         for paper in seed_papers:
-            contexts_by_seed[paper.paper_id] = await self.semantic_scholar_client.get_paper_context(
+            contexts_by_seed[
                 paper.paper_id
-            )
+            ] = await self.semantic_scholar_client.get_paper_context(paper.paper_id)
 
         context_candidates: dict[str, ContextCandidate] = {}
         cite_edges: dict[tuple[str, str, CitationEdgeType], CitationEdge] = {}
         extends_edges: dict[tuple[str, str, CitationEdgeType], CitationEdge] = {}
 
-        high_signal_context_ids = self._collect_high_signal_context_ids(contexts_by_seed)
+        high_signal_context_ids = self._collect_high_signal_context_ids(
+            contexts_by_seed
+        )
 
         for seed_id, payload in contexts_by_seed.items():
             references = payload.get("references") or []
@@ -219,7 +221,9 @@ class CitationGraphService:
         high_signal_ids: set[str] = set()
         for payload in contexts_by_seed.values():
             related = []
-            for item in (payload.get("references") or []) + (payload.get("citations") or []):
+            for item in (payload.get("references") or []) + (
+                payload.get("citations") or []
+            ):
                 if item.get("paperId"):
                     related.append(item)
             related.sort(key=lambda item: item.get("citationCount") or 0, reverse=True)
@@ -229,13 +233,21 @@ class CitationGraphService:
         return high_signal_ids
 
     @staticmethod
-    def _retain_context_nodes(context_candidates: dict[str, ContextCandidate]) -> set[str]:
+    def _retain_context_nodes(
+        context_candidates: dict[str, ContextCandidate],
+    ) -> set[str]:
         retained: set[str] = set()
         for context_id, candidate in context_candidates.items():
             connected_seeds = candidate.referenced_by | candidate.cites
-            has_bridge = bool(candidate.referenced_by and candidate.cites and len(connected_seeds) >= 2)
+            has_bridge = bool(
+                candidate.referenced_by
+                and candidate.cites
+                and len(connected_seeds) >= 2
+            )
             shared_across_seeds = len(connected_seeds) >= 2
-            high_signal = bool(candidate.high_signal_seeds) and candidate.citation_count >= 25
+            high_signal = (
+                bool(candidate.high_signal_seeds) and candidate.citation_count >= 25
+            )
             if shared_across_seeds or has_bridge or high_signal:
                 retained.add(context_id)
         return retained
@@ -293,6 +305,8 @@ class CitationGraphService:
                 for target in sorted(context.referenced_by):
                     if source == target:
                         continue
+                    if source not in seed_map or target not in seed_map:
+                        continue
                     if not self._has_method_overlap(
                         analysis_map.get(source),
                         analysis_map.get(target),
@@ -328,9 +342,15 @@ class CitationGraphService:
         source_analysis: PaperAnalysis | None,
         target_analysis: PaperAnalysis | None,
     ) -> bool:
-        if source_paper.year and target_paper.year and source_paper.year < target_paper.year:
+        if (
+            source_paper.year
+            and target_paper.year
+            and source_paper.year < target_paper.year
+        ):
             return False
-        return CitationGraphService._has_method_overlap(source_analysis, target_analysis)
+        return CitationGraphService._has_method_overlap(
+            source_analysis, target_analysis
+        )
 
     @staticmethod
     def _has_method_overlap(
@@ -399,5 +419,7 @@ class CitationGraphService:
         if not summary_parts and lineage_paths:
             summary_parts.append(lineage_paths[0].summary)
         if not summary_parts:
-            return "No strong citation lineage was identified among the selected papers."
+            return (
+                "No strong citation lineage was identified among the selected papers."
+            )
         return " ".join(summary_parts)

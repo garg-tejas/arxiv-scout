@@ -12,7 +12,6 @@ from app.routes import sessions
 from graph.analysis import build_analysis_graph
 from graph.discovery import build_discovery_graph
 from graph.survey import build_survey_graph
-from graph.supervisor import build_supervisor_graph
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
 from integrations.llm import GLMChatClient, GeminiChatClient, LLMRouter
@@ -142,7 +141,6 @@ async def lifespan(app: FastAPI):
         discovery_graph=discovery_graph,
         analysis_graph=analysis_graph,
         survey_graph=survey_graph,
-        supervisor_graph=build_supervisor_graph(),
     )
 
     yield

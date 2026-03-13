@@ -41,7 +41,6 @@ class ServiceContainer:
     discovery_graph: object
     analysis_graph: object
     survey_graph: object
-    supervisor_graph: object
 
 
 def get_services(request: Request) -> ServiceContainer:
