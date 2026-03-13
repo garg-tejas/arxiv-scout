@@ -102,13 +102,6 @@ class SessionService:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
-
-        now = utc_now()
-        snapshot.last_updated_at = now
-        expires_at = now + timedelta(days=self.ttl_days)
-        await self.session_store.update_session_snapshot(
-            snapshot, expires_at=expires_at
-        )
         return snapshot
 
     async def start_topic_interpretation(
@@ -293,6 +286,9 @@ class SessionService:
                 {
                     "session_id": session_id,
                     "command": GraphCommand.CONFIRM_TOPIC.value,
+                    "topic": snapshot.topic,
+                    "search_interpretation": snapshot.search_interpretation,
+                    "steering_preferences": snapshot.steering_preferences,
                 },
                 config=get_run_config(session_id, namespace="discovery"),
             )
@@ -935,6 +931,9 @@ class SessionService:
                     "session_id": session_id,
                     "command": GraphCommand.NUDGE_DISCOVERY.value,
                     "nudge_text": text,
+                    "topic": snapshot.topic,
+                    "search_interpretation": snapshot.search_interpretation,
+                    "steering_preferences": snapshot.steering_preferences,
                 },
                 config=get_run_config(session_id, namespace="discovery"),
             )

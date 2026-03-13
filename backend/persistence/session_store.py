@@ -152,7 +152,7 @@ class SessionStore:
 
     async def delete_expired_sessions(self, cutoff: datetime) -> int:
         cursor = await self.database.connection.execute(
-            "DELETE FROM sessions WHERE updated_at < ?",
+            "DELETE FROM sessions WHERE expires_at < ?",
             (cutoff.isoformat(),),
         )
         await self.database.connection.commit()
