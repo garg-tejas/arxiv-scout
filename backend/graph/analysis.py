@@ -4,7 +4,6 @@ import asyncio
 
 from langgraph.graph import END, START, StateGraph
 
-from graph.checkpoint import get_sqlite_checkpointer
 from graph.state import AppGraphState
 from models.analysis import PaperAnalysis
 from models.citation import CitationGraph
@@ -108,6 +107,7 @@ def build_analysis_graph(
     citation_graph_service: CitationGraphService,
     artifact_service: ArtifactService,
     stream_service: StreamService,
+    checkpointer,
 ):
     workflow = StateGraph(AppGraphState)
 
@@ -139,4 +139,4 @@ def build_analysis_graph(
     workflow.add_edge("build_citation_graph", "build_method_comparison_table")
     workflow.add_edge("build_method_comparison_table", END)
 
-    return workflow.compile(checkpointer=get_sqlite_checkpointer())
+    return workflow.compile(checkpointer=checkpointer)

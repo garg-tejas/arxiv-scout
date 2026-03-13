@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from graph.checkpoint import get_sqlite_checkpointer
 from graph.state import AppGraphState
 from graph.commands import GraphCommand
 from models.discovery import SteeringPreferences
@@ -20,7 +19,9 @@ def _get_command(state: AppGraphState) -> str:
     return (state.get("command") or "").strip()
 
 
-def _finalize_interpretation(interpretation: SearchInterpretation) -> SearchInterpretation:
+def _finalize_interpretation(
+    interpretation: SearchInterpretation,
+) -> SearchInterpretation:
     normalized_topic = normalize_topic(interpretation.normalized_topic or "")
     seen: set[str] = set()
     search_angles: list[str] = []
@@ -35,7 +36,9 @@ def _finalize_interpretation(interpretation: SearchInterpretation) -> SearchInte
         search_angles.append(cleaned)
 
     if not normalized_topic or len(search_angles) < 3 or len(search_angles) > 4:
-        raise ValueError("LLM topic interpretation did not return 3-4 distinct search angles.")
+        raise ValueError(
+            "LLM topic interpretation did not return 3-4 distinct search angles."
+        )
 
     return SearchInterpretation(
         normalized_topic=normalized_topic,
@@ -63,7 +66,9 @@ def _default_preferences(state: AppGraphState) -> SteeringPreferences:
     return SteeringPreferences()
 
 
-async def _interpret_topic_node(state: AppGraphState, *, discovery_service: DiscoveryService) -> AppGraphState:
+async def _interpret_topic_node(
+    state: AppGraphState, *, discovery_service: DiscoveryService
+) -> AppGraphState:
     topic = normalize_topic(state.get("topic") or "")
     interpretation = await discovery_service.interpret_topic(topic)
     interpretation = _finalize_interpretation(interpretation)
@@ -92,7 +97,9 @@ def _topic_confirmation_interrupt(state: AppGraphState) -> AppGraphState:
     }
 
 
-async def _apply_steering_delta(state: AppGraphState, *, discovery_service: DiscoveryService) -> AppGraphState:
+async def _apply_steering_delta(
+    state: AppGraphState, *, discovery_service: DiscoveryService
+) -> AppGraphState:
     nudge_text = " ".join((state.get("nudge_text") or "").split()).strip()
     merged = await discovery_service.merge_steering_preferences(
         current=_default_preferences(state),
@@ -104,7 +111,9 @@ async def _apply_steering_delta(state: AppGraphState, *, discovery_service: Disc
     }
 
 
-async def _fetch_candidates(state: AppGraphState, *, discovery_service: DiscoveryService) -> AppGraphState:
+async def _fetch_candidates(
+    state: AppGraphState, *, discovery_service: DiscoveryService
+) -> AppGraphState:
     interpretation = state.get("search_interpretation")
     if not isinstance(interpretation, SearchInterpretation):
         raise ValueError("Discovery graph is missing search_interpretation.")
@@ -118,7 +127,9 @@ async def _fetch_candidates(state: AppGraphState, *, discovery_service: Discover
     }
 
 
-async def _curate_shortlist(state: AppGraphState, *, discovery_service: DiscoveryService) -> AppGraphState:
+async def _curate_shortlist(
+    state: AppGraphState, *, discovery_service: DiscoveryService
+) -> AppGraphState:
     interpretation = state.get("search_interpretation")
     if not isinstance(interpretation, SearchInterpretation):
         raise ValueError("Discovery graph is missing search_interpretation.")
@@ -132,7 +143,9 @@ async def _curate_shortlist(state: AppGraphState, *, discovery_service: Discover
     )
     shortlist = curated[: discovery_service.shortlist_size]
     row_by_id = {row.paper_id: row for row in method_table}
-    ordered_rows = [row_by_id[paper.paper_id] for paper in shortlist if paper.paper_id in row_by_id]
+    ordered_rows = [
+        row_by_id[paper.paper_id] for paper in shortlist if paper.paper_id in row_by_id
+    ]
     return {
         **state,
         "latest_shortlist": shortlist,
@@ -164,10 +177,16 @@ def _shortlist_review_interrupt(state: AppGraphState) -> AppGraphState:
 
 
 def _store_approved_papers(state: AppGraphState) -> AppGraphState:
-    paper_ids = [paper_id.strip() for paper_id in (state.get("approved_papers") or []) if paper_id.strip()]
+    paper_ids = [
+        paper_id.strip()
+        for paper_id in (state.get("approved_papers") or [])
+        if paper_id.strip()
+    ]
     shortlist = state.get("latest_shortlist") or []
     shortlist_map = {paper.paper_id: paper for paper in shortlist}
-    approved_details = [shortlist_map[paper_id] for paper_id in paper_ids if paper_id in shortlist_map]
+    approved_details = [
+        shortlist_map[paper_id] for paper_id in paper_ids if paper_id in shortlist_map
+    ]
     return {
         **state,
         "approved_papers": paper_ids,
@@ -175,7 +194,7 @@ def _store_approved_papers(state: AppGraphState) -> AppGraphState:
     }
 
 
-def build_discovery_graph(*, discovery_service: DiscoveryService):
+def build_discovery_graph(*, discovery_service: DiscoveryService, checkpointer):
     workflow = StateGraph(AppGraphState)
     workflow.add_node("command_router", lambda state: state)
     workflow.add_conditional_edges(
@@ -221,4 +240,4 @@ def build_discovery_graph(*, discovery_service: DiscoveryService):
     workflow.add_edge("store_approved_papers", END)
 
     workflow.add_edge(START, "command_router")
-    return workflow.compile(checkpointer=get_sqlite_checkpointer())
+    return workflow.compile(checkpointer=checkpointer)

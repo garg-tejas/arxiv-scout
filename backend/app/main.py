@@ -10,12 +10,14 @@ from app.config import get_settings
 from app.dependencies import ServiceContainer
 from app.routes import sessions
 from graph.analysis import build_analysis_graph
+from graph.checkpoint import get_graph_db_path
 from graph.discovery import build_discovery_graph
 from graph.survey import build_survey_graph
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
 from integrations.llm import GLMChatClient, GeminiChatClient, LLMRouter
 from integrations.semantic_scholar import SemanticScholarClient
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from persistence.cleanup import cleanup_expired_sessions
 from persistence.database import DatabaseManager
 from persistence.session_store import SessionStore
@@ -95,55 +97,62 @@ async def lifespan(app: FastAPI):
         session_store=session_store,
         heartbeat_seconds=settings.sse_heartbeat_seconds,
     )
-    discovery_graph = build_discovery_graph(discovery_service=discovery_service)
-    analysis_graph = build_analysis_graph(
-        analysis_service=analysis_service,
-        citation_graph_service=citation_graph_service,
-        artifact_service=artifact_service,
-        stream_service=stream_service,
-    )
-    survey_graph = build_survey_graph(
-        survey_service=survey_service,
-        stream_service=stream_service,
-    )
-    session_service = SessionService(
-        session_store=session_store,
-        artifact_service=artifact_service,
-        analysis_service=analysis_service,
-        citation_graph_service=citation_graph_service,
-        discovery_service=discovery_service,
-        stream_service=stream_service,
-        revision_service=revision_service,
-        survey_service=survey_service,
-        ttl_days=settings.session_ttl_days,
-        analysis_paper_cap=settings.analysis_paper_cap,
-        discovery_graph=discovery_graph,
-        analysis_graph=analysis_graph,
-        survey_graph=survey_graph,
-    )
+    async with AsyncSqliteSaver.from_conn_string(
+        str(get_graph_db_path())
+    ) as checkpointer:
+        discovery_graph = build_discovery_graph(
+            discovery_service=discovery_service, checkpointer=checkpointer
+        )
+        analysis_graph = build_analysis_graph(
+            analysis_service=analysis_service,
+            citation_graph_service=citation_graph_service,
+            artifact_service=artifact_service,
+            stream_service=stream_service,
+            checkpointer=checkpointer,
+        )
+        survey_graph = build_survey_graph(
+            survey_service=survey_service,
+            stream_service=stream_service,
+            checkpointer=checkpointer,
+        )
+        session_service = SessionService(
+            session_store=session_store,
+            artifact_service=artifact_service,
+            analysis_service=analysis_service,
+            citation_graph_service=citation_graph_service,
+            discovery_service=discovery_service,
+            stream_service=stream_service,
+            revision_service=revision_service,
+            survey_service=survey_service,
+            ttl_days=settings.session_ttl_days,
+            analysis_paper_cap=settings.analysis_paper_cap,
+            discovery_graph=discovery_graph,
+            analysis_graph=analysis_graph,
+            survey_graph=survey_graph,
+        )
 
-    app.state.services = ServiceContainer(
-        settings=settings,
-        database=database,
-        session_store=session_store,
-        semantic_scholar_client=semantic_scholar_client,
-        arxiv_client=arxiv_client,
-        firecrawl_client=firecrawl_client,
-        llm_router=llm_router,
-        stream_service=stream_service,
-        analysis_service=analysis_service,
-        citation_graph_service=citation_graph_service,
-        artifact_service=artifact_service,
-        discovery_service=discovery_service,
-        revision_service=revision_service,
-        survey_service=survey_service,
-        session_service=session_service,
-        discovery_graph=discovery_graph,
-        analysis_graph=analysis_graph,
-        survey_graph=survey_graph,
-    )
+        app.state.services = ServiceContainer(
+            settings=settings,
+            database=database,
+            session_store=session_store,
+            semantic_scholar_client=semantic_scholar_client,
+            arxiv_client=arxiv_client,
+            firecrawl_client=firecrawl_client,
+            llm_router=llm_router,
+            stream_service=stream_service,
+            analysis_service=analysis_service,
+            citation_graph_service=citation_graph_service,
+            artifact_service=artifact_service,
+            discovery_service=discovery_service,
+            revision_service=revision_service,
+            survey_service=survey_service,
+            session_service=session_service,
+            discovery_graph=discovery_graph,
+            analysis_graph=analysis_graph,
+            survey_graph=survey_graph,
+        )
 
-    yield
+        yield
 
     await semantic_scholar_client.aclose()
     await arxiv_client.aclose()
