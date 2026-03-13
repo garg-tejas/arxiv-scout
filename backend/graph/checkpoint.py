@@ -29,12 +29,13 @@ def get_sqlite_checkpointer() -> SqliteSaver:
     return SqliteSaver(conn)
 
 
-def get_run_config(session_id: str) -> RunnableConfig:
+def get_run_config(session_id: str, *, namespace: str) -> RunnableConfig:
     """
     Standard LangGraph run config for this app.
 
     Carries the session_id as thread identifier so checkpointing and
-    tracing stay grouped per session.
+    tracing stay grouped per session.  The namespace prevents different
+    graphs (discovery, analysis, survey) from colliding on the same
+    checkpoint thread.
     """
-    return {"configurable": {"thread_id": session_id}}
-
+    return {"configurable": {"thread_id": f"{session_id}:{namespace}"}}

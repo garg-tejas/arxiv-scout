@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     debug: bool = False
     session_ttl_days: int = 7
     sse_heartbeat_seconds: int = 15
-    database_path: Path = Path(__file__).resolve().parents[1] / "data" / "arxiv_scout.db"
+    database_path: Path = (
+        Path(__file__).resolve().parents[1] / "data" / "arxiv_scout.db"
+    )
     semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1"
     semantic_scholar_api_key: str | None = None
     arxiv_api_url: str = "https://export.arxiv.org/api/query"
@@ -31,6 +33,7 @@ class Settings(BaseSettings):
     langsmith_tracing: bool = False
     langsmith_api_key: str | None = None
     langsmith_project: str = "arxiv-literature-scout"
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     model_config = SettingsConfigDict(
         env_prefix="ARXIV_SCOUT_",

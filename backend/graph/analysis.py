@@ -11,6 +11,7 @@ from models.papers import CuratedPaper
 from services.analysis_service import AnalysisService
 from services.artifact_service import ArtifactService
 from services.citation_graph_service import CitationGraphService
+from models.events import StreamEvent
 from services.stream_service import StreamService
 
 
@@ -21,7 +22,9 @@ async def _analyze_selected_papers(
     stream_service: StreamService,
 ) -> AppGraphState:
     session_id = state.get("session_id") or ""
-    selected_papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
+    selected_papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
     degraded_ids: list[str] = []
     analyses: list[PaperAnalysis] = []
 
@@ -53,8 +56,12 @@ async def _build_citation_graph_node(
     *,
     citation_graph_service: CitationGraphService,
 ) -> AppGraphState:
-    selected_papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
-    analyses = [PaperAnalysis.model_validate(a) for a in state.get("paper_analyses") or []]
+    selected_papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
+    analyses = [
+        PaperAnalysis.model_validate(a) for a in state.get("paper_analyses") or []
+    ]
     citation_graph: CitationGraph = await citation_graph_service.build_graph(
         seed_papers=selected_papers,
         analyses=analyses,
@@ -70,8 +77,12 @@ async def _build_method_comparison_table_node(
     *,
     artifact_service: ArtifactService,
 ) -> AppGraphState:
-    selected_papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
-    analyses = [PaperAnalysis.model_validate(a) for a in state.get("paper_analyses") or []]
+    selected_papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
+    analyses = [
+        PaperAnalysis.model_validate(a) for a in state.get("paper_analyses") or []
+    ]
     method_comparison_table = artifact_service.build_method_comparison_table(
         papers=selected_papers,
         analyses=analyses,
@@ -89,8 +100,6 @@ def build_analysis_graph(
     artifact_service: ArtifactService,
     stream_service: StreamService,
 ):
-    from models.events import StreamEvent  # local import to avoid cycles
-
     workflow = StateGraph(AppGraphState)
 
     async def analyze_node(state: AppGraphState) -> AppGraphState:

@@ -85,7 +85,9 @@ class SessionService:
         )
         expires_at = now + timedelta(days=self.ttl_days)
 
-        await self.session_store.create_session(snapshot, created_at=now, expires_at=expires_at)
+        await self.session_store.create_session(
+            snapshot, created_at=now, expires_at=expires_at
+        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=session_id,
@@ -104,10 +106,14 @@ class SessionService:
         now = utc_now()
         snapshot.last_updated_at = now
         expires_at = now + timedelta(days=self.ttl_days)
-        await self.session_store.update_session_snapshot(snapshot, expires_at=expires_at)
+        await self.session_store.update_session_snapshot(
+            snapshot, expires_at=expires_at
+        )
         return snapshot
 
-    async def start_topic_interpretation(self, session_id: str, topic: str) -> SessionSnapshot | None:
+    async def start_topic_interpretation(
+        self, session_id: str, topic: str
+    ) -> SessionSnapshot | None:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
@@ -134,16 +140,36 @@ class SessionService:
         snapshot.citation_graph = None
         snapshot.analysis_summary = AnalysisSummary()
         self._reset_survey_state(snapshot)
-        snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.PENDING
+        )
         snapshot.last_updated_at = start_time
         await self._persist_snapshot(snapshot)
 
@@ -164,7 +190,7 @@ class SessionService:
                     "command": GraphCommand.START_TOPIC.value,
                     "topic": snapshot.topic,
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="discovery"),
             )
             interpretation = state.get("search_interpretation")
             pending_interrupt = state.get("pending_interrupt")
@@ -173,7 +199,9 @@ class SessionService:
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
             snapshot.allowed_actions = []
-            snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = (
+                ArtifactStatusValue.FAILED
+            )
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -185,7 +213,9 @@ class SessionService:
                     data={"error": str(exc), "topic": snapshot.topic},
                 )
             )
-            raise SessionExecutionError("Discovery topic interpretation failed.") from exc
+            raise SessionExecutionError(
+                "Discovery topic interpretation failed."
+            ) from exc
 
         snapshot.search_interpretation = interpretation
         snapshot.status = SessionStatus.WAITING_FOR_INPUT
@@ -196,7 +226,9 @@ class SessionService:
             expected_action_types=[AllowedAction.CONFIRM_TOPIC],
         )
         snapshot.allowed_actions = [AllowedAction.CONFIRM_TOPIC]
-        snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SEARCH_INTERPRETATION.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
@@ -224,14 +256,20 @@ class SessionService:
         )
         return snapshot
 
-    async def confirm_topic_interpretation(self, session_id: str) -> SessionSnapshot | None:
+    async def confirm_topic_interpretation(
+        self, session_id: str
+    ) -> SessionSnapshot | None:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
         if snapshot.current_checkpoint != CheckpointType.TOPIC_CONFIRMATION:
-            raise SessionTransitionError("Session is not waiting for topic confirmation.")
+            raise SessionTransitionError(
+                "Session is not waiting for topic confirmation."
+            )
         if snapshot.search_interpretation is None or snapshot.topic is None:
-            raise SessionTransitionError("Session is missing the interpreted discovery topic.")
+            raise SessionTransitionError(
+                "Session is missing the interpreted discovery topic."
+            )
 
         snapshot.status = SessionStatus.RUNNING
         snapshot.current_phase = PhaseType.DISCOVERY
@@ -256,15 +294,19 @@ class SessionService:
                     "session_id": session_id,
                     "command": GraphCommand.CONFIRM_TOPIC.value,
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="discovery"),
             )
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
             snapshot.allowed_actions = []
-            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.FAILED
-            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+                ArtifactStatusValue.FAILED
+            )
+            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+                ArtifactStatusValue.FAILED
+            )
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -279,7 +321,9 @@ class SessionService:
             raise SessionExecutionError("Discovery fetch failed.") from exc
 
         snapshot.latest_shortlist = list(state.get("latest_shortlist") or [])
-        snapshot.preliminary_method_table = list(state.get("preliminary_method_table") or [])
+        snapshot.preliminary_method_table = list(
+            state.get("preliminary_method_table") or []
+        )
         snapshot.status = SessionStatus.WAITING_FOR_INPUT
         snapshot.current_phase = PhaseType.DISCOVERY
         snapshot.current_checkpoint = CheckpointType.SHORTLIST_REVIEW
@@ -297,8 +341,12 @@ class SessionService:
             AllowedAction.NUDGE_DISCOVERY,
             AllowedAction.START_ANALYSIS,
         ]
-        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
@@ -310,7 +358,12 @@ class SessionService:
                 checkpoint=CheckpointType.SHORTLIST_REVIEW,
                 artifact_type=ArtifactType.SHORTLIST,
                 message="Curated shortlist is ready for review.",
-                data={"papers": [paper.model_dump(mode="json") for paper in snapshot.latest_shortlist]},
+                data={
+                    "papers": [
+                        paper.model_dump(mode="json")
+                        for paper in snapshot.latest_shortlist
+                    ]
+                },
             )
         )
         await self.stream_service.publish(
@@ -321,7 +374,12 @@ class SessionService:
                 checkpoint=CheckpointType.SHORTLIST_REVIEW,
                 artifact_type=ArtifactType.PRELIMINARY_METHOD_TABLE,
                 message="Preliminary method extraction table is ready.",
-                data={"rows": [row.model_dump(mode="json") for row in snapshot.preliminary_method_table]},
+                data={
+                    "rows": [
+                        row.model_dump(mode="json")
+                        for row in snapshot.preliminary_method_table
+                    ]
+                },
             )
         )
         await self.stream_service.publish(
@@ -346,7 +404,9 @@ class SessionService:
             return None
         self._ensure_shortlist_review_ready(snapshot)
 
-        valid_ids = {paper.paper_id for paper in snapshot.latest_shortlist} | set(snapshot.approved_papers)
+        valid_ids = {paper.paper_id for paper in snapshot.latest_shortlist} | set(
+            snapshot.approved_papers
+        )
         deduped_ids: list[str] = []
         seen: set[str] = set()
         for paper_id in paper_ids:
@@ -362,14 +422,18 @@ class SessionService:
 
         snapshot.approved_papers = deduped_ids
         await self.discovery_graph.aupdate_state(
-            config=get_run_config(session_id),
+            config=get_run_config(session_id, namespace="discovery"),
             values={"approved_papers": deduped_ids},
             as_node="store_approved_papers",
         )
-        graph_state = await self.discovery_graph.aget_state(get_run_config(session_id))
+        graph_state = await self.discovery_graph.aget_state(
+            get_run_config(session_id, namespace="discovery")
+        )
         values = graph_state.values if graph_state else {}
         snapshot.approved_papers = list(values.get("approved_papers") or deduped_ids)
-        snapshot.approved_paper_details = list(values.get("approved_paper_details") or [])
+        snapshot.approved_paper_details = list(
+            values.get("approved_paper_details") or []
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.stream_service.publish(
@@ -394,7 +458,9 @@ class SessionService:
             return None
 
         if not snapshot.approved_papers:
-            raise SessionTransitionError("At least one approved paper is required before analysis can start.")
+            raise SessionTransitionError(
+                "At least one approved paper is required before analysis can start."
+            )
 
         selected_ids = [paper_id.strip() for paper_id in paper_ids if paper_id.strip()]
         approved_ids = list(snapshot.approved_papers)
@@ -441,7 +507,9 @@ class SessionService:
                 f"Analysis accepts at most {self.analysis_paper_cap} paper IDs per run."
             )
 
-        invalid_ids = [paper_id for paper_id in selected_ids if paper_id not in approved_ids]
+        invalid_ids = [
+            paper_id for paper_id in selected_ids if paper_id not in approved_ids
+        ]
         if invalid_ids:
             raise SessionTransitionError(
                 f"Selected paper IDs are not in the approved set: {', '.join(invalid_ids)}"
@@ -449,7 +517,9 @@ class SessionService:
 
         selected_papers = self._resolve_approved_paper_details(snapshot, selected_ids)
         if len(selected_papers) != len(selected_ids):
-            missing = sorted(set(selected_ids) - {paper.paper_id for paper in selected_papers})
+            missing = sorted(
+                set(selected_ids) - {paper.paper_id for paper in selected_papers}
+            )
             raise SessionTransitionError(
                 f"Missing metadata for approved paper(s): {', '.join(missing)}"
             )
@@ -470,13 +540,27 @@ class SessionService:
         snapshot.method_comparison_table = []
         snapshot.citation_graph = None
         self._reset_survey_state(snapshot)
-        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.PENDING
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -494,9 +578,11 @@ class SessionService:
             state = await self.analysis_graph.ainvoke(
                 {
                     "session_id": session_id,
-                    "selected_papers": [paper.model_dump(mode="json") for paper in selected_papers],
+                    "selected_papers": [
+                        paper.model_dump(mode="json") for paper in selected_papers
+                    ],
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="analysis"),
             )
         except Exception as exc:
             snapshot.status = SessionStatus.ERROR
@@ -508,9 +594,15 @@ class SessionService:
             snapshot.analysis_summary.retained_context_node_count = 0
             snapshot.analysis_summary.lineage_path_count = 0
             snapshot.analysis_summary.citation_graph_summary = None
-            snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.FAILED
-            snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.FAILED
-            snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = (
+                ArtifactStatusValue.FAILED
+            )
+            snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = (
+                ArtifactStatusValue.FAILED
+            )
+            snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = (
+                ArtifactStatusValue.FAILED
+            )
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -527,7 +619,9 @@ class SessionService:
         degraded_ids = list(state.get("degraded_paper_ids") or [])
         analyses = [analysis for analysis in state.get("paper_analyses") or []]
         citation_graph = state.get("citation_graph")
-        method_comparison_table = [row for row in state.get("method_comparison_table") or []]
+        method_comparison_table = [
+            row for row in state.get("method_comparison_table") or []
+        ]
 
         snapshot.paper_analyses = analyses
         snapshot.method_comparison_table = method_comparison_table
@@ -541,12 +635,22 @@ class SessionService:
         snapshot.analysis_summary.completed = True
         snapshot.analysis_summary.degraded_paper_ids = degraded_ids
         snapshot.analysis_summary.comparison_row_count = len(method_comparison_table)
-        snapshot.analysis_summary.retained_context_node_count = len(citation_graph.context_nodes)
+        snapshot.analysis_summary.retained_context_node_count = len(
+            citation_graph.context_nodes
+        )
         snapshot.analysis_summary.lineage_path_count = len(citation_graph.lineage_paths)
-        snapshot.analysis_summary.citation_graph_summary = citation_graph.narrative_summary
-        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.analysis_summary.citation_graph_summary = (
+            citation_graph.narrative_summary
+        )
+        snapshot.artifact_status[ArtifactType.PAPER_ANALYSIS.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.CITATION_GRAPH.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.METHOD_COMPARISON_TABLE.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.stream_service.publish(
@@ -566,7 +670,11 @@ class SessionService:
                 phase=PhaseType.ANALYSIS,
                 artifact_type=ArtifactType.METHOD_COMPARISON_TABLE,
                 message="Method comparison table is ready.",
-                data={"rows": [row.model_dump(mode="json") for row in method_comparison_table]},
+                data={
+                    "rows": [
+                        row.model_dump(mode="json") for row in method_comparison_table
+                    ]
+                },
             )
         )
         await self.stream_service.publish(
@@ -598,7 +706,9 @@ class SessionService:
         if snapshot is None:
             return None
         if not snapshot.analysis_summary.completed or not snapshot.paper_analyses:
-            raise SessionTransitionError("Complete analysis before starting survey generation.")
+            raise SessionTransitionError(
+                "Complete analysis before starting survey generation."
+            )
 
         if brief is None and not skip:
             snapshot.status = SessionStatus.WAITING_FOR_INPUT
@@ -637,12 +747,23 @@ class SessionService:
                     "session_id": session_id,
                     "snapshot": snapshot.model_dump(mode="json"),
                     "survey_brief": survey_brief,
-                    "selected_papers": [paper.model_dump(mode="json") for paper in self._resolve_selected_analysis_papers(snapshot)],
-                    "paper_analyses": [analysis.model_dump(mode="json") for analysis in snapshot.paper_analyses],
-                    "method_comparison_table": [row.model_dump(mode="json") for row in snapshot.method_comparison_table],
-                    "citation_graph": snapshot.citation_graph.model_dump(mode="json") if snapshot.citation_graph else None,
+                    "selected_papers": [
+                        paper.model_dump(mode="json")
+                        for paper in self._resolve_selected_analysis_papers(snapshot)
+                    ],
+                    "paper_analyses": [
+                        analysis.model_dump(mode="json")
+                        for analysis in snapshot.paper_analyses
+                    ],
+                    "method_comparison_table": [
+                        row.model_dump(mode="json")
+                        for row in snapshot.method_comparison_table
+                    ],
+                    "citation_graph": snapshot.citation_graph.model_dump(mode="json")
+                    if snapshot.citation_graph
+                    else None,
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="survey"),
             )
         except Exception as exc:
             await self._mark_survey_failure(
@@ -661,18 +782,29 @@ class SessionService:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
-        if snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW or snapshot.final_survey_document is None:
-            raise SessionTransitionError("Session is not waiting at final survey review.")
+        if (
+            snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW
+            or snapshot.final_survey_document is None
+        ):
+            raise SessionTransitionError(
+                "Session is not waiting at final survey review."
+            )
         if snapshot.survey_brief is None:
-            raise SessionTransitionError("Survey brief is missing from the current session.")
+            raise SessionTransitionError(
+                "Survey brief is missing from the current session."
+            )
 
         try:
             revision_map = self.revision_service.validate_revisions(revision_request)
         except ValueError as exc:
             raise SessionTransitionError(str(exc)) from exc
 
-        cluster_map = {cluster.cluster_id: cluster for cluster in snapshot.theme_clusters}
-        section_map = {section.section_id: section for section in snapshot.survey_sections}
+        cluster_map = {
+            cluster.cluster_id: cluster for cluster in snapshot.theme_clusters
+        }
+        section_map = {
+            section.section_id: section for section in snapshot.survey_sections
+        }
         unknown_ids = sorted(set(revision_map) - set(section_map))
         if unknown_ids:
             raise SessionTransitionError(
@@ -684,8 +816,12 @@ class SessionService:
         snapshot.current_checkpoint = CheckpointType.NONE
         snapshot.pending_interrupt = None
         snapshot.allowed_actions = []
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.PENDING
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -706,16 +842,32 @@ class SessionService:
                     "session_id": session_id,
                     "snapshot": snapshot.model_dump(mode="json"),
                     "survey_brief": snapshot.survey_brief,
-                    "selected_papers": [paper.model_dump(mode="json") for paper in selected_papers],
-                    "paper_analyses": [analysis.model_dump(mode="json") for analysis in snapshot.paper_analyses],
-                    "method_comparison_table": [row.model_dump(mode="json") for row in snapshot.method_comparison_table],
-                    "citation_graph": snapshot.citation_graph.model_dump(mode="json") if snapshot.citation_graph else None,
-                    "theme_clusters": [cluster.model_dump(mode="json") for cluster in snapshot.theme_clusters],
-                    "survey_sections": [section.model_dump(mode="json") for section in snapshot.survey_sections],
+                    "selected_papers": [
+                        paper.model_dump(mode="json") for paper in selected_papers
+                    ],
+                    "paper_analyses": [
+                        analysis.model_dump(mode="json")
+                        for analysis in snapshot.paper_analyses
+                    ],
+                    "method_comparison_table": [
+                        row.model_dump(mode="json")
+                        for row in snapshot.method_comparison_table
+                    ],
+                    "citation_graph": snapshot.citation_graph.model_dump(mode="json")
+                    if snapshot.citation_graph
+                    else None,
+                    "theme_clusters": [
+                        cluster.model_dump(mode="json")
+                        for cluster in snapshot.theme_clusters
+                    ],
+                    "survey_sections": [
+                        section.model_dump(mode="json")
+                        for section in snapshot.survey_sections
+                    ],
                     "revision_feedback_map": revision_map,
                     "section_queue": list(revision_map.keys()),
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="survey"),
             )
         except Exception as exc:
             await self._mark_survey_failure(
@@ -731,8 +883,13 @@ class SessionService:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
-        if snapshot.final_survey_document is None or snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW:
-            raise SessionTransitionError("Session is not waiting for final survey approval.")
+        if (
+            snapshot.final_survey_document is None
+            or snapshot.current_checkpoint != CheckpointType.SURVEY_REVIEW
+        ):
+            raise SessionTransitionError(
+                "Session is not waiting for final survey approval."
+            )
 
         snapshot.status = SessionStatus.COMPLETED
         snapshot.current_phase = PhaseType.SURVEY
@@ -760,13 +917,17 @@ class SessionService:
             raise SessionTransitionError("Survey markdown is not ready yet.")
         return self.survey_service.render_markdown(snapshot.final_survey_document)
 
-    async def apply_discovery_nudge(self, session_id: str, text: str) -> SessionSnapshot | None:
+    async def apply_discovery_nudge(
+        self, session_id: str, text: str
+    ) -> SessionSnapshot | None:
         snapshot = await self.session_store.get_session_snapshot(session_id)
         if snapshot is None:
             return None
         self._ensure_shortlist_review_ready(snapshot)
         if snapshot.search_interpretation is None or snapshot.topic is None:
-            raise SessionTransitionError("Session is missing discovery context for rerunning the shortlist.")
+            raise SessionTransitionError(
+                "Session is missing discovery context for rerunning the shortlist."
+            )
 
         try:
             state = await self.discovery_graph.ainvoke(
@@ -775,18 +936,24 @@ class SessionService:
                     "command": GraphCommand.NUDGE_DISCOVERY.value,
                     "nudge_text": text,
                 },
-                config=get_run_config(session_id),
+                config=get_run_config(session_id, namespace="discovery"),
             )
         except Exception as exc:
             raise SessionExecutionError("Discovery steering merge failed.") from exc
-        snapshot.steering_preferences = state.get("steering_preferences") or snapshot.steering_preferences
+        snapshot.steering_preferences = (
+            state.get("steering_preferences") or snapshot.steering_preferences
+        )
         snapshot.status = SessionStatus.RUNNING
         snapshot.current_phase = PhaseType.DISCOVERY
         snapshot.current_checkpoint = CheckpointType.NONE
         snapshot.pending_interrupt = None
         snapshot.allowed_actions = []
-        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+            ArtifactStatusValue.PENDING
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -798,12 +965,16 @@ class SessionService:
                 message="Discovery steering updated. Regenerating shortlist.",
                 data={
                     "nudge_text": text,
-                    "steering_preferences": snapshot.steering_preferences.model_dump(mode="json"),
+                    "steering_preferences": snapshot.steering_preferences.model_dump(
+                        mode="json"
+                    ),
                 },
             )
         )
         snapshot.latest_shortlist = list(state.get("latest_shortlist") or [])
-        snapshot.preliminary_method_table = list(state.get("preliminary_method_table") or [])
+        snapshot.preliminary_method_table = list(
+            state.get("preliminary_method_table") or []
+        )
         snapshot.status = SessionStatus.WAITING_FOR_INPUT
         snapshot.current_phase = PhaseType.DISCOVERY
         snapshot.current_checkpoint = CheckpointType.SHORTLIST_REVIEW
@@ -821,8 +992,12 @@ class SessionService:
             AllowedAction.NUDGE_DISCOVERY,
             AllowedAction.START_ANALYSIS,
         ]
-        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
@@ -834,7 +1009,12 @@ class SessionService:
                 checkpoint=CheckpointType.SHORTLIST_REVIEW,
                 artifact_type=ArtifactType.SHORTLIST,
                 message="Updated shortlist is ready after applying the steering nudge.",
-                data={"papers": [paper.model_dump(mode="json") for paper in snapshot.latest_shortlist]},
+                data={
+                    "papers": [
+                        paper.model_dump(mode="json")
+                        for paper in snapshot.latest_shortlist
+                    ]
+                },
             )
         )
         await self.stream_service.publish(
@@ -845,7 +1025,12 @@ class SessionService:
                 checkpoint=CheckpointType.SHORTLIST_REVIEW,
                 artifact_type=ArtifactType.PRELIMINARY_METHOD_TABLE,
                 message="Preliminary method extraction table is ready.",
-                data={"rows": [row.model_dump(mode="json") for row in snapshot.preliminary_method_table]},
+                data={
+                    "rows": [
+                        row.model_dump(mode="json")
+                        for row in snapshot.preliminary_method_table
+                    ]
+                },
             )
         )
         await self.stream_service.publish(
@@ -862,7 +1047,9 @@ class SessionService:
 
     async def _persist_snapshot(self, snapshot: SessionSnapshot) -> None:
         expires_at = snapshot.last_updated_at + timedelta(days=self.ttl_days)
-        await self.session_store.update_session_snapshot(snapshot, expires_at=expires_at)
+        await self.session_store.update_session_snapshot(
+            snapshot, expires_at=expires_at
+        )
 
     async def _run_survey_pipeline(
         self,
@@ -873,7 +1060,9 @@ class SessionService:
     ) -> SessionSnapshot:
         selected_papers = self._resolve_selected_analysis_papers(snapshot)
         if not selected_papers:
-            raise SessionTransitionError("Selected analysis papers are missing from the session state.")
+            raise SessionTransitionError(
+                "Selected analysis papers are missing from the session state."
+            )
 
         snapshot.status = SessionStatus.RUNNING
         snapshot.current_phase = PhaseType.SURVEY
@@ -891,10 +1080,18 @@ class SessionService:
             brief_ready=True,
             markdown_ready=False,
         )
-        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.PENDING
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.PENDING
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.PENDING
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.PENDING
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
 
@@ -908,7 +1105,9 @@ class SessionService:
             )
         )
 
-        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SURVEY_BRIEF.value] = (
+            ArtifactStatusValue.READY
+        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -929,7 +1128,9 @@ class SessionService:
         )
         snapshot.theme_clusters = clusters
         snapshot.survey_summary.cluster_count = len(clusters)
-        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.THEME_CLUSTERS.value] = (
+            ArtifactStatusValue.READY
+        )
         await self.stream_service.publish(
             StreamEvent(
                 session_id=snapshot.session_id,
@@ -937,7 +1138,11 @@ class SessionService:
                 phase=PhaseType.SURVEY,
                 artifact_type=ArtifactType.THEME_CLUSTERS,
                 message="Theme clusters are ready.",
-                data={"clusters": [cluster.model_dump(mode="json") for cluster in clusters]},
+                data={
+                    "clusters": [
+                        cluster.model_dump(mode="json") for cluster in clusters
+                    ]
+                },
             )
         )
 
@@ -962,7 +1167,9 @@ class SessionService:
         )
         snapshot.survey_sections = sections
         snapshot.final_survey_document = final_document
-        snapshot.survey_summary.section_ids = [section.section_id for section in sections]
+        snapshot.survey_summary.section_ids = [
+            section.section_id for section in sections
+        ]
         snapshot.survey_summary.completed = True
         snapshot.survey_summary.markdown_ready = True
         snapshot.status = SessionStatus.WAITING_FOR_INPUT
@@ -980,8 +1187,12 @@ class SessionService:
             AllowedAction.REVISE_SURVEY_SECTIONS,
             AllowedAction.APPROVE_FINAL_SURVEY,
         ]
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.stream_service.publish(
@@ -1024,8 +1235,12 @@ class SessionService:
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
             snapshot.allowed_actions = []
-            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.FAILED
-            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.FAILED
+            snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+                ArtifactStatusValue.FAILED
+            )
+            snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+                ArtifactStatusValue.FAILED
+            )
             snapshot.last_updated_at = utc_now()
             await self._persist_snapshot(snapshot)
             await self.stream_service.publish(
@@ -1058,8 +1273,12 @@ class SessionService:
             AllowedAction.NUDGE_DISCOVERY,
             AllowedAction.START_ANALYSIS,
         ]
-        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SHORTLIST.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.PRELIMINARY_METHOD_TABLE.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
 
         await self._persist_snapshot(snapshot)
@@ -1108,7 +1327,9 @@ class SessionService:
         paper_ids: list[str],
     ) -> list[CuratedPaper]:
         shortlist_map = {paper.paper_id: paper for paper in snapshot.latest_shortlist}
-        approved_map = {paper.paper_id: paper for paper in snapshot.approved_paper_details}
+        approved_map = {
+            paper.paper_id: paper for paper in snapshot.approved_paper_details
+        }
         resolved: list[CuratedPaper] = []
         for paper_id in paper_ids:
             paper = shortlist_map.get(paper_id) or approved_map.get(paper_id)
@@ -1116,8 +1337,12 @@ class SessionService:
                 resolved.append(paper)
         return resolved
 
-    def _resolve_selected_analysis_papers(self, snapshot: SessionSnapshot) -> list[CuratedPaper]:
-        selected_ids = snapshot.analysis_summary.selected_paper_ids or snapshot.approved_papers
+    def _resolve_selected_analysis_papers(
+        self, snapshot: SessionSnapshot
+    ) -> list[CuratedPaper]:
+        selected_ids = (
+            snapshot.analysis_summary.selected_paper_ids or snapshot.approved_papers
+        )
         return self._resolve_approved_paper_details(snapshot, selected_ids)
 
     def _reset_survey_state(self, snapshot: SessionSnapshot) -> None:
@@ -1139,8 +1364,12 @@ class SessionService:
         snapshot.current_checkpoint = CheckpointType.NONE
         snapshot.pending_interrupt = None
         snapshot.allowed_actions = []
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.FAILED
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.FAILED
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.FAILED
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.FAILED
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.stream_service.publish(
@@ -1162,19 +1391,25 @@ class SessionService:
 
         snapshot.survey_brief = state.get("survey_brief") or snapshot.survey_brief
         snapshot.theme_clusters = [
-            ThemeCluster.model_validate(c) for c in state.get("theme_clusters") or snapshot.theme_clusters
+            ThemeCluster.model_validate(c)
+            for c in state.get("theme_clusters") or snapshot.theme_clusters
         ]
         snapshot.survey_sections = [
-            SurveySection.model_validate(s) for s in state.get("survey_sections") or snapshot.survey_sections
+            SurveySection.model_validate(s)
+            for s in state.get("survey_sections") or snapshot.survey_sections
         ]
         document = state.get("final_survey_document")
         if document is not None and not isinstance(document, SurveyDocument):
             document = SurveyDocument.model_validate(document)
         snapshot.final_survey_document = document or snapshot.final_survey_document
         if snapshot.final_survey_document is None:
-            raise SessionExecutionError("Survey pipeline did not produce a final document.")
+            raise SessionExecutionError(
+                "Survey pipeline did not produce a final document."
+            )
 
-        snapshot.survey_summary.section_ids = [section.section_id for section in snapshot.survey_sections]
+        snapshot.survey_summary.section_ids = [
+            section.section_id for section in snapshot.survey_sections
+        ]
         snapshot.survey_summary.completed = True
         snapshot.survey_summary.cluster_count = len(snapshot.theme_clusters)
         snapshot.survey_summary.brief_ready = True
@@ -1194,8 +1429,12 @@ class SessionService:
             AllowedAction.REVISE_SURVEY_SECTIONS,
             AllowedAction.APPROVE_FINAL_SURVEY,
         ]
-        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = ArtifactStatusValue.READY
-        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = ArtifactStatusValue.READY
+        snapshot.artifact_status[ArtifactType.SURVEY_SECTION.value] = (
+            ArtifactStatusValue.READY
+        )
+        snapshot.artifact_status[ArtifactType.FINAL_SURVEY_MARKDOWN.value] = (
+            ArtifactStatusValue.READY
+        )
         snapshot.last_updated_at = utc_now()
         await self._persist_snapshot(snapshot)
         await self.stream_service.publish(
@@ -1239,7 +1478,8 @@ class SessionService:
                 papers=papers,
                 analyses=snapshot.paper_analyses,
                 comparison_rows=snapshot.method_comparison_table,
-                brief=snapshot.survey_brief or await self.survey_service.synthesize_brief(snapshot),
+                brief=snapshot.survey_brief
+                or await self.survey_service.synthesize_brief(snapshot),
                 citation_graph=snapshot.citation_graph,
                 revision_feedback=current_feedback,
                 revision_count=current_revision_count,
@@ -1247,7 +1487,8 @@ class SessionService:
             review = await self.survey_service.review_section(
                 section=section,
                 cluster=cluster,
-                brief=snapshot.survey_brief or await self.survey_service.synthesize_brief(snapshot),
+                brief=snapshot.survey_brief
+                or await self.survey_service.synthesize_brief(snapshot),
             )
             if review.verdict.value == "ACCEPT" or current_revision_count >= 2:
                 section.accepted = True
@@ -1268,7 +1509,10 @@ class SessionService:
                     event_type=StreamEventType.NODE_UPDATE,
                     phase=PhaseType.SURVEY,
                     message=f"Section reviewer requested a revision for {section.title}.",
-                    data={"section_id": section.section_id, "feedback": review.feedback},
+                    data={
+                        "section_id": section.section_id,
+                        "feedback": review.feedback,
+                    },
                 )
             )
             current_feedback = review.feedback

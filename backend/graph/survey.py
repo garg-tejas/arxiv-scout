@@ -7,8 +7,15 @@ from graph.state import AppGraphState
 from models.enums import ArtifactType, PhaseType, StreamEventType
 from models.papers import CuratedPaper
 from models.session import SessionSnapshot
-from models.survey import SurveyBrief, SurveyDocument, SurveySection, SurveySummary, ThemeCluster
+from models.survey import (
+    SurveyBrief,
+    SurveyDocument,
+    SurveySection,
+    SurveySummary,
+    ThemeCluster,
+)
 from services.stream_service import StreamService
+from models.events import StreamEvent
 from services.survey_service import SurveyService
 
 
@@ -18,7 +25,9 @@ async def _prepare_survey_brief_node(
     survey_service: SurveyService,
 ) -> AppGraphState:
     snapshot = SessionSnapshot.model_validate(state.get("snapshot") or {})
-    brief: SurveyBrief = state.get("survey_brief") or await survey_service.synthesize_brief(snapshot)
+    brief: SurveyBrief = state.get(
+        "survey_brief"
+    ) or await survey_service.synthesize_brief(snapshot)
     return {
         **state,
         "survey_brief": brief,
@@ -31,7 +40,9 @@ async def _cluster_themes_node(
     survey_service: SurveyService,
 ) -> AppGraphState:
     brief: SurveyBrief = state.get("survey_brief")
-    papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
+    papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
     analyses = [a for a in state.get("paper_analyses") or []]
     comparison_rows = [row for row in state.get("method_comparison_table") or []]
     citation_graph = state.get("citation_graph")
@@ -54,15 +65,23 @@ async def _draft_current_section_node(
     survey_service: SurveyService,
 ) -> AppGraphState:
     brief: SurveyBrief = state.get("survey_brief")
-    clusters = [ThemeCluster.model_validate(c) for c in state.get("theme_clusters") or []]
-    sections = [SurveySection.model_validate(s) for s in state.get("survey_sections") or []]
-    queue: list[str] = list(state.get("section_queue") or [cluster.cluster_id for cluster in clusters])
+    clusters = [
+        ThemeCluster.model_validate(c) for c in state.get("theme_clusters") or []
+    ]
+    sections = [
+        SurveySection.model_validate(s) for s in state.get("survey_sections") or []
+    ]
+    queue: list[str] = list(
+        state.get("section_queue") or [cluster.cluster_id for cluster in clusters]
+    )
     if not queue:
         return state
     current_id = queue[0]
     cluster_map = {cluster.cluster_id: cluster for cluster in clusters}
     cluster = cluster_map[current_id]
-    papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
+    papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
     analyses = [a for a in state.get("paper_analyses") or []]
     comparison_rows = [row for row in state.get("method_comparison_table") or []]
     citation_graph = state.get("citation_graph")
@@ -99,9 +118,15 @@ async def _review_current_section_node(
 ) -> AppGraphState:
     session_id = state.get("session_id") or ""
     brief: SurveyBrief = state.get("survey_brief")
-    clusters = [ThemeCluster.model_validate(c) for c in state.get("theme_clusters") or []]
-    sections = [SurveySection.model_validate(s) for s in state.get("survey_sections") or []]
-    queue: list[str] = list(state.get("section_queue") or [cluster.cluster_id for cluster in clusters])
+    clusters = [
+        ThemeCluster.model_validate(c) for c in state.get("theme_clusters") or []
+    ]
+    sections = [
+        SurveySection.model_validate(s) for s in state.get("survey_sections") or []
+    ]
+    queue: list[str] = list(
+        state.get("section_queue") or [cluster.cluster_id for cluster in clusters]
+    )
     if not queue:
         return state
     current_id = queue[0]
@@ -162,8 +187,12 @@ async def _assemble_survey_node(
     survey_service: SurveyService,
 ) -> AppGraphState:
     brief: SurveyBrief = state.get("survey_brief")
-    sections = [SurveySection.model_validate(s) for s in state.get("survey_sections") or []]
-    papers = [CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []]
+    sections = [
+        SurveySection.model_validate(s) for s in state.get("survey_sections") or []
+    ]
+    papers = [
+        CuratedPaper.model_validate(p) for p in state.get("selected_papers") or []
+    ]
     comparison_rows = [row for row in state.get("method_comparison_table") or []]
     citation_graph = state.get("citation_graph")
     document: SurveyDocument = await survey_service.assemble_document(
@@ -192,8 +221,6 @@ def build_survey_graph(
     survey_service: SurveyService,
     stream_service: StreamService,
 ):
-    from models.events import StreamEvent  # local import to avoid cycles
-
     workflow = StateGraph(AppGraphState)
 
     async def prepare_brief_node(state: AppGraphState) -> AppGraphState:
@@ -227,7 +254,9 @@ def build_survey_graph(
     workflow.add_edge("draft_current_section", "review_current_section")
     workflow.add_conditional_edges(
         "review_current_section",
-        lambda state: "assemble_survey" if not (state.get("section_queue") or []) else "draft_current_section",
+        lambda state: "assemble_survey"
+        if not (state.get("section_queue") or [])
+        else "draft_current_section",
         {
             "assemble_survey": "assemble_survey",
             "draft_current_section": "draft_current_section",
