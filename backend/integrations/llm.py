@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -7,6 +8,8 @@ from openai import AsyncOpenAI
 from pydantic import TypeAdapter, ValidationError
 
 from models.enums import LLMProvider, LLMRole
+
+logger = logging.getLogger(__name__)
 
 SchemaT = TypeVar("SchemaT")
 
@@ -58,7 +61,9 @@ class BaseChatClient:
 
     def _require_api_key(self) -> str:
         if not self.api_key:
-            raise LLMError(f"{self.__class__.__name__} is not configured with an API key.")
+            raise LLMError(
+                f"{self.__class__.__name__} is not configured with an API key."
+            )
         return self.api_key
 
     def _get_client(self) -> AsyncOpenAI:
@@ -96,16 +101,22 @@ class BaseChatClient:
         try:
             completion = await self._get_client().chat.completions.create(**request)
         except Exception as exc:
-            raise LLMError(f"{self.provider.value} completion request failed: {exc}") from exc
+            raise LLMError(
+                f"{self.provider.value} completion request failed: {exc}"
+            ) from exc
 
         try:
             message = completion.choices[0].message
         except (AttributeError, IndexError) as exc:
-            raise LLMError(f"{self.provider.value} returned no completion choices: {completion}") from exc
+            raise LLMError(
+                f"{self.provider.value} returned no completion choices: {completion}"
+            ) from exc
 
         text = _coerce_message_content(message.content)
         if not text:
-            raise LLMError(f"{self.provider.value} returned empty content: {completion.model_dump()}")
+            raise LLMError(
+                f"{self.provider.value} returned empty content: {completion.model_dump()}"
+            )
 
         return LLMCompletion(
             text=text,
@@ -138,22 +149,42 @@ class LLMRouter:
             LLMRole.SEARCH: ModelRoute(LLMProvider.GLM, glm_client.default_model),
             LLMRole.CURATION: ModelRoute(LLMProvider.GLM, glm_client.default_model),
             LLMRole.STEERING: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.PAPER_ANALYZER: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.SURVEY_ORCHESTRATOR: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.THEMATIC_CLUSTERING: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.SECTION_REVIEWER: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.SURVEY_ASSEMBLER: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.SECTION_WRITER: ModelRoute(LLMProvider.GEMINI, gemini_client.default_model),
+            LLMRole.PAPER_ANALYZER: ModelRoute(
+                LLMProvider.GLM, glm_client.default_model
+            ),
+            LLMRole.SURVEY_ORCHESTRATOR: ModelRoute(
+                LLMProvider.GLM, glm_client.default_model
+            ),
+            LLMRole.THEMATIC_CLUSTERING: ModelRoute(
+                LLMProvider.GLM, glm_client.default_model
+            ),
+            LLMRole.SECTION_REVIEWER: ModelRoute(
+                LLMProvider.GLM, glm_client.default_model
+            ),
+            LLMRole.SURVEY_ASSEMBLER: ModelRoute(
+                LLMProvider.GLM, glm_client.default_model
+            ),
+            LLMRole.SECTION_WRITER: ModelRoute(
+                LLMProvider.GEMINI, gemini_client.default_model
+            ),
             LLMRole.SMOKE_TEST: ModelRoute(LLMProvider.GLM, glm_client.default_model),
         }
 
-    def get_route(self, role: LLMRole, *, provider_override: LLMProvider | None = None) -> ModelRoute:
+    def get_route(
+        self, role: LLMRole, *, provider_override: LLMProvider | None = None
+    ) -> ModelRoute:
         route = self.role_routes[role]
         if provider_override is None:
             return route
         if provider_override == LLMProvider.GEMINI:
             return ModelRoute(provider_override, self.gemini_client.default_model)
         return ModelRoute(provider_override, self.glm_client.default_model)
+
+    def _fallback_provider(self, primary: LLMProvider) -> LLMProvider:
+        """Return the alternate provider for fallback."""
+        if primary == LLMProvider.GEMINI:
+            return LLMProvider.GLM
+        return LLMProvider.GEMINI
 
     async def generate_text(
         self,
@@ -167,11 +198,33 @@ class LLMRouter:
     ) -> LLMCompletion:
         route = self.get_route(role, provider_override=provider_override)
         client = self._get_client(route.provider)
-        return await client.complete(
-            messages=_build_messages(system_prompt=system_prompt, user_prompt=user_prompt),
-            model=model_override or route.model,
-            temperature=temperature,
-        )
+        try:
+            return await client.complete(
+                messages=_build_messages(
+                    system_prompt=system_prompt, user_prompt=user_prompt
+                ),
+                model=model_override or route.model,
+                temperature=temperature,
+            )
+        except LLMError:
+            if provider_override is not None:
+                raise  # caller explicitly chose a provider; don't second-guess
+            fallback_provider = self._fallback_provider(route.provider)
+            fallback_route = self.get_route(role, provider_override=fallback_provider)
+            fallback_client = self._get_client(fallback_provider)
+            logger.warning(
+                "LLM provider %s failed for role %s; falling back to %s",
+                route.provider.value,
+                role.value,
+                fallback_provider.value,
+            )
+            return await fallback_client.complete(
+                messages=_build_messages(
+                    system_prompt=system_prompt, user_prompt=user_prompt
+                ),
+                model=fallback_route.model,
+                temperature=temperature,
+            )
 
     async def generate_structured(
         self,
@@ -184,9 +237,52 @@ class LLMRouter:
         provider_override: LLMProvider | None = None,
         model_override: str | None = None,
     ) -> SchemaT:
+        try:
+            return await self._generate_structured_inner(
+                role=role,
+                user_prompt=user_prompt,
+                schema_type=schema_type,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                route=self.get_route(role, provider_override=provider_override),
+                model_override=model_override,
+            )
+        except LLMError:
+            if provider_override is not None:
+                raise
+            fallback_provider = self._fallback_provider(
+                self.get_route(role).provider,
+            )
+            fallback_route = self.get_route(role, provider_override=fallback_provider)
+            logger.warning(
+                "LLM provider %s failed for structured role %s; falling back to %s",
+                self.get_route(role).provider.value,
+                role.value,
+                fallback_provider.value,
+            )
+            return await self._generate_structured_inner(
+                role=role,
+                user_prompt=user_prompt,
+                schema_type=schema_type,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                route=fallback_route,
+                model_override=None,
+            )
+
+    async def _generate_structured_inner(
+        self,
+        *,
+        role: LLMRole,
+        user_prompt: str,
+        schema_type: Any,
+        system_prompt: str | None,
+        temperature: float,
+        route: ModelRoute,
+        model_override: str | None,
+    ) -> SchemaT:
         adapter: TypeAdapter[SchemaT] = TypeAdapter(schema_type)
         schema = adapter.json_schema()
-        route = self.get_route(role, provider_override=provider_override)
         client = self._get_client(route.provider)
         model_name = model_override or route.model
         attempt_prompt = user_prompt
@@ -194,7 +290,9 @@ class LLMRouter:
 
         for attempt in range(self.max_retries + 1):
             completion = await client.complete(
-                messages=_build_messages(system_prompt=system_prompt, user_prompt=attempt_prompt),
+                messages=_build_messages(
+                    system_prompt=system_prompt, user_prompt=attempt_prompt
+                ),
                 model=model_name,
                 temperature=temperature,
                 response_json_schema=schema,
