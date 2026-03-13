@@ -11,11 +11,11 @@ ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
 class ArxivClient:
     def __init__(self, *, api_url: str) -> None:
         self.api_url = api_url
+        self._client = httpx.AsyncClient(timeout=20.0)
 
     async def resolve_metadata(self, arxiv_id: str) -> dict | None:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(self.api_url, params={"id_list": arxiv_id})
-            response.raise_for_status()
+        response = await self._client.get(self.api_url, params={"id_list": arxiv_id})
+        response.raise_for_status()
 
         root = ET.fromstring(response.text)
         entry = root.find("atom:entry", ATOM_NAMESPACE)
@@ -42,6 +42,9 @@ class ArxivClient:
             "authors": authors,
             "year": year,
         }
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     @staticmethod
     def _get_text(entry: ET.Element, path: str) -> str | None:

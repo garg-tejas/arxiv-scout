@@ -147,6 +147,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await semantic_scholar_client.aclose()
+    await arxiv_client.aclose()
+    await firecrawl_client.aclose()
     await database.close()
 
 

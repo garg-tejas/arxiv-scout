@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from langgraph.graph import END, START, StateGraph
 
 from graph.checkpoint import get_sqlite_checkpointer
@@ -28,8 +30,15 @@ async def _analyze_selected_papers(
     degraded_ids: list[str] = []
     analyses: list[PaperAnalysis] = []
 
-    for paper in selected_papers:
-        analysis = await analysis_service.analyze_paper(paper)
+    semaphore = asyncio.Semaphore(4)
+
+    async def _analyze_one(paper: CuratedPaper) -> PaperAnalysis:
+        async with semaphore:
+            return await analysis_service.analyze_paper(paper)
+
+    results = await asyncio.gather(*[_analyze_one(p) for p in selected_papers])
+
+    for paper, analysis in zip(selected_papers, results):
         analyses.append(analysis)
         if analysis.analysis_quality.value != "full_text":
             degraded_ids.append(analysis.paper_id)
