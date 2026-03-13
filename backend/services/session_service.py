@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from uuid import uuid4
 
@@ -28,6 +29,8 @@ from services.discovery_service import DiscoveryService
 from services.revision_service import RevisionService
 from services.stream_service import StreamService
 from services.survey_service import SurveyService
+
+logger = logging.getLogger(__name__)
 
 
 class SessionTransitionError(Exception):
@@ -188,6 +191,7 @@ class SessionService:
             interpretation = state.get("search_interpretation")
             pending_interrupt = state.get("pending_interrupt")
         except Exception as exc:
+            logger.exception("Topic interpretation failed for session %s", session_id)
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
@@ -293,6 +297,7 @@ class SessionService:
                 config=get_run_config(session_id, namespace="discovery"),
             )
         except Exception as exc:
+            logger.exception("Paper fetch/curation failed for session %s", session_id)
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
@@ -581,6 +586,7 @@ class SessionService:
                 config=get_run_config(session_id, namespace="analysis"),
             )
         except Exception as exc:
+            logger.exception("Analysis failed for session %s", session_id)
             snapshot.status = SessionStatus.ERROR
             snapshot.current_checkpoint = CheckpointType.NONE
             snapshot.pending_interrupt = None
@@ -762,6 +768,7 @@ class SessionService:
                 config=get_run_config(session_id, namespace="survey"),
             )
         except Exception as exc:
+            logger.exception("Survey generation failed for session %s", session_id)
             await self._mark_survey_failure(
                 snapshot,
                 message="Survey generation failed.",
@@ -866,6 +873,7 @@ class SessionService:
                 config=get_run_config(session_id, namespace="survey"),
             )
         except Exception as exc:
+            logger.exception("Survey revision failed for session %s", session_id)
             await self._mark_survey_failure(
                 snapshot,
                 message="Survey revision failed.",
@@ -938,6 +946,7 @@ class SessionService:
                 config=get_run_config(session_id, namespace="discovery"),
             )
         except Exception as exc:
+            logger.exception("Steering merge failed for session %s", session_id)
             raise SessionExecutionError("Discovery steering merge failed.") from exc
         snapshot.steering_preferences = (
             state.get("steering_preferences") or snapshot.steering_preferences

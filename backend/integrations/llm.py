@@ -109,6 +109,12 @@ class BaseChatClient:
         try:
             completion = await self._get_client().chat.completions.create(**request)
         except Exception as exc:
+            logger.error(
+                "%s API call failed (model=%s): %s",
+                self.provider.value,
+                request["model"],
+                exc,
+            )
             raise LLMError(
                 f"{self.provider.value} completion request failed: {exc}"
             ) from exc
@@ -318,11 +324,18 @@ class LLMRouter:
                     f"Validation error:\n{exc}"
                 )
 
-        raise StructuredLLMError(
+        error_msg = (
             "Structured output validation failed after retry attempts."
             if validation_error is None
             else f"Structured output validation failed after retry attempts: {validation_error}"
         )
+        logger.error(
+            "Structured output exhausted retries for role %s (provider=%s): %s",
+            role.value,
+            client.provider.value,
+            error_msg,
+        )
+        raise StructuredLLMError(error_msg)
 
     def _get_client(self, provider: LLMProvider) -> BaseChatClient:
         if provider == LLMProvider.GEMINI:
