@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, TypeVar
 
 from openai import AsyncOpenAI
@@ -85,18 +86,25 @@ class BaseChatClient:
     ) -> LLMCompletion:
         request: dict[str, Any] = {
             "model": model or self.default_model,
-            "messages": [message.__dict__ for message in messages],
+            "messages": [asdict(message) for message in messages],
             "temperature": temperature,
         }
         if response_json_schema is not None:
-            request["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "structured_response",
-                    "schema": response_json_schema,
-                    "strict": True,
-                },
-            }
+            request["response_format"] = {"type": "json_object"}
+            schema_instruction = (
+                "You MUST respond with valid JSON that conforms to the following JSON schema:\n"
+                f"```json\n{json.dumps(response_json_schema, indent=2)}\n```\n"
+                "Respond ONLY with the JSON object, no additional text."
+            )
+            messages_dicts = request["messages"]
+            if messages_dicts and messages_dicts[0].get("role") == "system":
+                messages_dicts[0]["content"] = (
+                    schema_instruction + "\n\n" + messages_dicts[0]["content"]
+                )
+            else:
+                messages_dicts.insert(
+                    0, {"role": "system", "content": schema_instruction}
+                )
 
         try:
             completion = await self._get_client().chat.completions.create(**request)
