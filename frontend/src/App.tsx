@@ -149,147 +149,174 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero">
-        <p className="eyebrow">Checkpoint 3.4</p>
+
+      {/* ── Masthead ── */}
+      <header className="masthead">
+        <span className="masthead-kicker">AI Research Pipeline</span>
         <h1>ArXiv Literature Scout</h1>
-        <p className="lede">
-          Discovery, analysis, and survey generation are now wired to the live backend,
-          including brief checkpoints, section revisions, and markdown export.
-        </p>
-        <div className="hero-stats">
-          <div>
+        <p className="masthead-sub">Discovery, analysis &amp; survey generation</p>
+
+        <div className="masthead-rule-wrap">
+          <hr className="rule-heavy" />
+          <span className="masthead-rule-ornament">✦</span>
+          <hr className="rule-heavy" />
+        </div>
+
+        <div className="masthead-stats">
+          <div className="masthead-stat">
             <span className="stat-label">Session</span>
-            <strong>{sessionId ?? "Creating..."}</strong>
+            <strong>{sessionId ? sessionId.slice(0, 18) + "…" : "Creating…"}</strong>
           </div>
-          <div>
+          <div className="masthead-stat">
             <span className="stat-label">Phase</span>
             <strong>{snapshot.current_phase}</strong>
           </div>
-          <div>
+          <div className="masthead-stat">
+            <span className="stat-label">Status</span>
+            <strong>{snapshot.status}</strong>
+          </div>
+          <div className="masthead-stat">
             <span className="stat-label">Updated</span>
             <strong>{formattedUpdatedAt}</strong>
           </div>
         </div>
       </header>
 
-      <section className="meta-card">
-        <h2>Session State</h2>
-        <p>
-          The app is subscribed to the backend SSE stream and refreshes the snapshot
-          as discovery artifacts arrive or interrupts are raised.
-        </p>
-        <ul>
-          <li>Status: <code>{snapshot.status}</code></li>
-          <li>Checkpoint: <code>{snapshot.current_checkpoint}</code></li>
-          <li>Allowed actions: <code>{snapshot.allowed_actions.join(", ") || "none"}</code></li>
-        </ul>
-      </section>
+      {/* ── Session ribbon ── */}
+      <div className="session-ribbon">
+        <span className="session-ribbon-item">
+          Checkpoint: <code>{snapshot.current_checkpoint}</code>
+        </span>
+        <span className="session-ribbon-sep">·</span>
+        <span className="session-ribbon-item">
+          Actions: <code>{snapshot.allowed_actions.join(", ") || "none"}</code>
+        </span>
+      </div>
 
-      <section className="phase-grid">
-        <DiscoveryView
-          snapshot={snapshot}
-          busy={busy}
-          errorMessage={errorMessage}
-          onStartTopic={async (topic) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => startTopic(sessionId, topic));
-          }}
-          onConfirmTopic={async () => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => confirmTopic(sessionId));
-          }}
-          onUpdateApprovedPapers={async (paperIds) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => updateApprovedPapers(sessionId, paperIds));
-          }}
-          onNudgeDiscovery={async (text) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => nudgeDiscovery(sessionId, text));
-          }}
-        />
-        <AnalysisView
-          snapshot={snapshot}
-          busy={busy}
-          errorMessage={errorMessage}
-          onStartAnalysis={async (paperIds) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => startAnalysis(sessionId, paperIds));
-          }}
-        />
-        <SurveyView
-          snapshot={snapshot}
-          busy={busy}
-          errorMessage={errorMessage}
-          onStartSurvey={async (payload) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => startSurvey(sessionId, payload));
-          }}
-          onReviseSurvey={async (revisions) => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => reviseSurvey(sessionId, revisions));
-          }}
-          onApproveSurvey={async () => {
-            if (!sessionId) {
-              return;
-            }
-            await runSessionAction(() => approveSurvey(sessionId));
-          }}
-          onDownloadMarkdown={async () => {
-            if (!sessionId) {
-              return;
-            }
-            try {
-              setBusy(true);
-              setErrorMessage(null);
-              const markdown = await getSurveyMarkdown(sessionId);
-              const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-              const url = URL.createObjectURL(blob);
-              const anchor = document.createElement("a");
-              anchor.href = url;
-              anchor.download = "arxiv-literature-scout-survey.md";
-              anchor.click();
-              URL.revokeObjectURL(url);
-            } catch (error) {
-              setErrorMessage(error instanceof Error ? error.message : "Markdown download failed.");
-            } finally {
-              setBusy(false);
-            }
-          }}
-        />
-      </section>
+      {/* ── Phase sections — single-column vertical stack ── */}
+      <div className="phase-stack">
+        <section className="phase-section">
+          <div className="phase-header">
+            <span className="phase-numeral">I</span>
+            <div className="phase-title-group">
+              <h2>Discovery</h2>
+              <p className="phase-desc">Interpret the topic, curate the shortlist, accumulate approved papers.</p>
+            </div>
+          </div>
+          <hr className="rule-heavy phase-rule" />
+          <DiscoveryView
+            snapshot={snapshot}
+            busy={busy}
+            errorMessage={errorMessage}
+            onStartTopic={async (topic) => {
+              if (!sessionId) return;
+              await runSessionAction(() => startTopic(sessionId, topic));
+            }}
+            onConfirmTopic={async () => {
+              if (!sessionId) return;
+              await runSessionAction(() => confirmTopic(sessionId));
+            }}
+            onUpdateApprovedPapers={async (paperIds) => {
+              if (!sessionId) return;
+              await runSessionAction(() => updateApprovedPapers(sessionId, paperIds));
+            }}
+            onNudgeDiscovery={async (text) => {
+              if (!sessionId) return;
+              await runSessionAction(() => nudgeDiscovery(sessionId, text));
+            }}
+          />
+        </section>
 
-      <section className="meta-card">
-        <h2>Recent Stream Events</h2>
+        <section className="phase-section">
+          <div className="phase-header">
+            <span className="phase-numeral">II</span>
+            <div className="phase-title-group">
+              <h2>Analysis</h2>
+              <p className="phase-desc">Extract summaries, compare methods, map the citation lineage.</p>
+            </div>
+          </div>
+          <hr className="rule-heavy phase-rule" />
+          <AnalysisView
+            snapshot={snapshot}
+            busy={busy}
+            errorMessage={errorMessage}
+            onStartAnalysis={async (paperIds) => {
+              if (!sessionId) return;
+              await runSessionAction(() => startAnalysis(sessionId, paperIds));
+            }}
+          />
+        </section>
+
+        <section className="phase-section">
+          <div className="phase-header">
+            <span className="phase-numeral">III</span>
+            <div className="phase-title-group">
+              <h2>Survey</h2>
+              <p className="phase-desc">Generate theme clusters, draft sections, approve the final Markdown survey.</p>
+            </div>
+          </div>
+          <hr className="rule-heavy phase-rule" />
+          <SurveyView
+            snapshot={snapshot}
+            busy={busy}
+            errorMessage={errorMessage}
+            onStartSurvey={async (payload) => {
+              if (!sessionId) return;
+              await runSessionAction(() => startSurvey(sessionId, payload));
+            }}
+            onReviseSurvey={async (revisions) => {
+              if (!sessionId) return;
+              await runSessionAction(() => reviseSurvey(sessionId, revisions));
+            }}
+            onApproveSurvey={async () => {
+              if (!sessionId) return;
+              await runSessionAction(() => approveSurvey(sessionId));
+            }}
+            onDownloadMarkdown={async () => {
+              if (!sessionId) return;
+              try {
+                setBusy(true);
+                setErrorMessage(null);
+                const markdown = await getSurveyMarkdown(sessionId);
+                const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = "arxiv-literature-scout-survey.md";
+                anchor.click();
+                URL.revokeObjectURL(url);
+              } catch (error) {
+                setErrorMessage(error instanceof Error ? error.message : "Markdown download failed.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </section>
+      </div>
+
+      {/* ── Stream events timeline ── */}
+      <div className="stream-section">
+        <p className="stream-section-header">Recent Stream Events</p>
         {streamEvents.length > 0 ? (
           <div className="event-list">
             {streamEvents.map((event) => (
               <article className="event-card" key={`${event.id ?? "event"}-${event.occurred_at}`}>
                 <div className="event-meta">
-                  <strong>{event.event_type}</strong>
                   <span>{new Date(event.occurred_at).toLocaleTimeString()}</span>
                 </div>
-                <p>{event.message ?? "No message."}</p>
+                <div>
+                  <strong className="event-type-label">{event.event_type}</strong>
+                  <p>{event.message ?? "No message."}</p>
+                </div>
               </article>
             ))}
           </div>
         ) : (
           <p className="helper-copy">Waiting for stream events.</p>
         )}
-      </section>
+      </div>
+
     </main>
   );
 }
