@@ -6,7 +6,13 @@ import asyncio
 from pydantic import BaseModel
 
 from app.config import get_settings
-from integrations.llm import GLMChatClient, GeminiChatClient, LLMProvider, LLMRole, LLMRouter
+from integrations.llm import (
+    LLMProvider,
+    LLMRole,
+    LLMRouter,
+    PrimaryHFChatClient,
+    SecondaryHFChatClient,
+)
 
 
 class SmokeResponse(BaseModel):
@@ -15,8 +21,14 @@ class SmokeResponse(BaseModel):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Smoke-check GLM or Gemini text and structured outputs.")
-    parser.add_argument("--provider", choices=[provider.value for provider in LLMProvider], required=True)
+    parser = argparse.ArgumentParser(
+        description="Smoke-check Hugging Face primary/secondary text and structured outputs."
+    )
+    parser.add_argument(
+        "--provider",
+        choices=[provider.value for provider in LLMProvider],
+        required=True,
+    )
     parser.add_argument(
         "--prompt",
         default="Reply with a short acknowledgement that the smoke test is running.",
@@ -33,16 +45,16 @@ def parse_args() -> argparse.Namespace:
 def build_router() -> LLMRouter:
     settings = get_settings()
     return LLMRouter(
-        glm_client=GLMChatClient(
-            base_url=settings.glm_base_url,
-            api_key=settings.glm_api_key,
-            default_model=settings.glm_model,
+        primary_client=PrimaryHFChatClient(
+            base_url=settings.hf_base_url,
+            api_key=settings.hf_api_key,
+            default_model=settings.hf_primary_model,
             timeout_seconds=settings.llm_timeout_seconds,
         ),
-        gemini_client=GeminiChatClient(
-            base_url=settings.gemini_base_url,
-            api_key=settings.gemini_api_key,
-            default_model=settings.gemini_model,
+        secondary_client=SecondaryHFChatClient(
+            base_url=settings.hf_base_url,
+            api_key=settings.hf_api_key,
+            default_model=settings.hf_secondary_model,
             timeout_seconds=settings.llm_timeout_seconds,
         ),
         max_retries=settings.llm_max_retries,

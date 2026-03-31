@@ -97,8 +97,8 @@ class ReviewVerdict(str, Enum):
 
 
 class LLMProvider(str, Enum):
-    GLM = "glm"
-    GEMINI = "gemini"
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
 
 
 class LLMRole(str, Enum):

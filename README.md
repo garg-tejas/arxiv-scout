@@ -56,7 +56,7 @@ If you want a written survey:
   - the analysis and comparison table.
 - The LangGraph **survey subgraph** then:
   - clusters your approved papers into themes,
-  - drafts one section per cluster (Gemini‑backed section writer),
+  - drafts one section per cluster (Qwen 3.5 9B via Hugging Face Router),
   - runs a section‑level review agent that either accepts or requests at most one more revision,
   - assembles:
     - a short introduction,
@@ -94,8 +94,8 @@ Each checkpoint:
   - LangGraph (discovery, analysis, survey, supervisor graphs)
   - SQLite (sessions + events + LangGraph SQLite checkpointer)
 - **LLM providers**
-  - GLM 4.7 Flash (OpenAI‑compatible) for most agents (search, steering, curation, analysis, survey orchestration)
-  - Gemini Flash for the **section writer** agent
+  - Hugging Face Router (`openai/gpt-oss-120b:novita`) for most agents (search, steering, curation, analysis, survey orchestration)
+  - Hugging Face Router (`Qwen/Qwen3.5-9B:together`) for the **section writer** agent
 - **External services**
   - Semantic Scholar API – discovery + citation graph context
   - arXiv API – topic search + canonical metadata
@@ -119,8 +119,7 @@ Each checkpoint:
 - API keys:
   - Semantic Scholar
   - Firecrawl
-  - GLM (Zhipu)
-  - Gemini
+  - Hugging Face token (`HF_TOKEN`)
   - (optional) LangSmith
 
 ### Clone the repo
@@ -190,8 +189,12 @@ ARXIV_SCOUT_DATABASE_PATH=backend/data/arxiv_scout.db
 # External APIs
 ARXIV_SCOUT_SEMANTIC_SCHOLAR_API_KEY=...
 ARXIV_SCOUT_FIRECRAWL_API_KEY=...
-ARXIV_SCOUT_GLM_API_KEY=...
-ARXIV_SCOUT_GEMINI_API_KEY=...
+ARXIV_SCOUT_HF_API_KEY=...
+
+# Hugging Face router models
+# model values MUST include provider suffix: model:provider
+ARXIV_SCOUT_HF_PRIMARY_MODEL=openai/gpt-oss-120b:novita
+ARXIV_SCOUT_HF_SECONDARY_MODEL=Qwen/Qwen3.5-9B:together
 
 # LLM behaviour
 ARXIV_SCOUT_LLM_TIMEOUT_SECONDS=45.0
@@ -240,7 +243,7 @@ backend/
   app/          # FastAPI app, config, routes
   graph/        # LangGraph graphs (discovery, analysis, survey, supervisor, checkpointing)
   models/       # Pydantic models and enums
-  integrations/ # Semantic Scholar, arXiv, Firecrawl, GLM, Gemini adapters
+  integrations/ # Semantic Scholar, arXiv, Firecrawl, and Hugging Face LLM adapters
   persistence/  # SQLite database manager and session store
   services/     # Session, discovery, analysis, citation, survey, streaming
 

@@ -140,48 +140,56 @@ class BaseChatClient:
         )
 
 
-class GLMChatClient(BaseChatClient):
-    provider = LLMProvider.GLM
+class PrimaryHFChatClient(BaseChatClient):
+    provider = LLMProvider.PRIMARY
 
 
-class GeminiChatClient(BaseChatClient):
-    provider = LLMProvider.GEMINI
+class SecondaryHFChatClient(BaseChatClient):
+    provider = LLMProvider.SECONDARY
 
 
 class LLMRouter:
     def __init__(
         self,
         *,
-        glm_client: GLMChatClient,
-        gemini_client: GeminiChatClient,
+        primary_client: PrimaryHFChatClient,
+        secondary_client: SecondaryHFChatClient,
         max_retries: int,
     ) -> None:
-        self.glm_client = glm_client
-        self.gemini_client = gemini_client
+        self.primary_client = primary_client
+        self.secondary_client = secondary_client
         self.max_retries = max_retries
         self.role_routes: dict[LLMRole, ModelRoute] = {
-            LLMRole.SEARCH: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.CURATION: ModelRoute(LLMProvider.GLM, glm_client.default_model),
-            LLMRole.STEERING: ModelRoute(LLMProvider.GLM, glm_client.default_model),
+            LLMRole.SEARCH: ModelRoute(
+                LLMProvider.PRIMARY, primary_client.default_model
+            ),
+            LLMRole.CURATION: ModelRoute(
+                LLMProvider.PRIMARY, primary_client.default_model
+            ),
+            LLMRole.STEERING: ModelRoute(
+                LLMProvider.PRIMARY, primary_client.default_model
+            ),
             LLMRole.PAPER_ANALYZER: ModelRoute(
-                LLMProvider.GLM, glm_client.default_model
+                LLMProvider.PRIMARY, primary_client.default_model
             ),
             LLMRole.SURVEY_ORCHESTRATOR: ModelRoute(
-                LLMProvider.GLM, glm_client.default_model
+                LLMProvider.PRIMARY, primary_client.default_model
             ),
             LLMRole.THEMATIC_CLUSTERING: ModelRoute(
-                LLMProvider.GLM, glm_client.default_model
+                LLMProvider.PRIMARY, primary_client.default_model
             ),
             LLMRole.SECTION_REVIEWER: ModelRoute(
-                LLMProvider.GLM, glm_client.default_model
+                LLMProvider.PRIMARY, primary_client.default_model
             ),
             LLMRole.SURVEY_ASSEMBLER: ModelRoute(
-                LLMProvider.GLM, glm_client.default_model
+                LLMProvider.PRIMARY, primary_client.default_model
             ),
             LLMRole.SECTION_WRITER: ModelRoute(
-                LLMProvider.GEMINI, gemini_client.default_model
+                LLMProvider.SECONDARY, secondary_client.default_model
             ),
-            LLMRole.SMOKE_TEST: ModelRoute(LLMProvider.GLM, glm_client.default_model),
+            LLMRole.SMOKE_TEST: ModelRoute(
+                LLMProvider.PRIMARY, primary_client.default_model
+            ),
         }
 
     def get_route(
@@ -190,15 +198,9 @@ class LLMRouter:
         route = self.role_routes[role]
         if provider_override is None:
             return route
-        if provider_override == LLMProvider.GEMINI:
-            return ModelRoute(provider_override, self.gemini_client.default_model)
-        return ModelRoute(provider_override, self.glm_client.default_model)
-
-    def _fallback_provider(self, primary: LLMProvider) -> LLMProvider:
-        """Return the alternate provider for fallback."""
-        if primary == LLMProvider.GEMINI:
-            return LLMProvider.GLM
-        return LLMProvider.GEMINI
+        if provider_override == LLMProvider.SECONDARY:
+            return ModelRoute(provider_override, self.secondary_client.default_model)
+        return ModelRoute(provider_override, self.primary_client.default_model)
 
     async def generate_text(
         self,
@@ -212,33 +214,13 @@ class LLMRouter:
     ) -> LLMCompletion:
         route = self.get_route(role, provider_override=provider_override)
         client = self._get_client(route.provider)
-        try:
-            return await client.complete(
-                messages=_build_messages(
-                    system_prompt=system_prompt, user_prompt=user_prompt
-                ),
-                model=model_override or route.model,
-                temperature=temperature,
-            )
-        except LLMError:
-            if provider_override is not None:
-                raise  # caller explicitly chose a provider; don't second-guess
-            fallback_provider = self._fallback_provider(route.provider)
-            fallback_route = self.get_route(role, provider_override=fallback_provider)
-            fallback_client = self._get_client(fallback_provider)
-            logger.warning(
-                "LLM provider %s failed for role %s; falling back to %s",
-                route.provider.value,
-                role.value,
-                fallback_provider.value,
-            )
-            return await fallback_client.complete(
-                messages=_build_messages(
-                    system_prompt=system_prompt, user_prompt=user_prompt
-                ),
-                model=fallback_route.model,
-                temperature=temperature,
-            )
+        return await client.complete(
+            messages=_build_messages(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            ),
+            model=model_override or route.model,
+            temperature=temperature,
+        )
 
     async def generate_structured(
         self,
@@ -251,38 +233,15 @@ class LLMRouter:
         provider_override: LLMProvider | None = None,
         model_override: str | None = None,
     ) -> SchemaT:
-        try:
-            return await self._generate_structured_inner(
-                role=role,
-                user_prompt=user_prompt,
-                schema_type=schema_type,
-                system_prompt=system_prompt,
-                temperature=temperature,
-                route=self.get_route(role, provider_override=provider_override),
-                model_override=model_override,
-            )
-        except LLMError:
-            if provider_override is not None:
-                raise
-            fallback_provider = self._fallback_provider(
-                self.get_route(role).provider,
-            )
-            fallback_route = self.get_route(role, provider_override=fallback_provider)
-            logger.warning(
-                "LLM provider %s failed for structured role %s; falling back to %s",
-                self.get_route(role).provider.value,
-                role.value,
-                fallback_provider.value,
-            )
-            return await self._generate_structured_inner(
-                role=role,
-                user_prompt=user_prompt,
-                schema_type=schema_type,
-                system_prompt=system_prompt,
-                temperature=temperature,
-                route=fallback_route,
-                model_override=None,
-            )
+        return await self._generate_structured_inner(
+            role=role,
+            user_prompt=user_prompt,
+            schema_type=schema_type,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            route=self.get_route(role, provider_override=provider_override),
+            model_override=model_override,
+        )
 
     async def _generate_structured_inner(
         self,
@@ -338,9 +297,9 @@ class LLMRouter:
         raise StructuredLLMError(error_msg)
 
     def _get_client(self, provider: LLMProvider) -> BaseChatClient:
-        if provider == LLMProvider.GEMINI:
-            return self.gemini_client
-        return self.glm_client
+        if provider == LLMProvider.SECONDARY:
+            return self.secondary_client
+        return self.primary_client
 
 
 def _build_messages(*, system_prompt: str | None, user_prompt: str) -> list[LLMMessage]:

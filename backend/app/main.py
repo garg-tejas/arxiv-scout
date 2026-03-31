@@ -15,7 +15,7 @@ from graph.discovery import build_discovery_graph
 from graph.survey import build_survey_graph
 from integrations.arxiv import ArxivClient
 from integrations.firecrawl import FirecrawlClient
-from integrations.llm import GLMChatClient, GeminiChatClient, LLMRouter
+from integrations.llm import LLMRouter, PrimaryHFChatClient, SecondaryHFChatClient
 from integrations.semantic_scholar import SemanticScholarClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from persistence.cleanup import cleanup_expired_sessions
@@ -61,21 +61,21 @@ async def lifespan(app: FastAPI):
         base_url=settings.firecrawl_base_url,
         api_key=settings.firecrawl_api_key,
     )
-    glm_client = GLMChatClient(
-        base_url=settings.glm_base_url,
-        api_key=settings.glm_api_key,
-        default_model=settings.glm_model,
+    primary_client = PrimaryHFChatClient(
+        base_url=settings.hf_base_url,
+        api_key=settings.hf_api_key,
+        default_model=settings.hf_primary_model,
         timeout_seconds=settings.llm_timeout_seconds,
     )
-    gemini_client = GeminiChatClient(
-        base_url=settings.gemini_base_url,
-        api_key=settings.gemini_api_key,
-        default_model=settings.gemini_model,
+    secondary_client = SecondaryHFChatClient(
+        base_url=settings.hf_base_url,
+        api_key=settings.hf_api_key,
+        default_model=settings.hf_secondary_model,
         timeout_seconds=settings.llm_timeout_seconds,
     )
     llm_router = LLMRouter(
-        glm_client=glm_client,
-        gemini_client=gemini_client,
+        primary_client=primary_client,
+        secondary_client=secondary_client,
         max_retries=settings.llm_max_retries,
     )
     survey_service = SurveyService(llm_router=llm_router)

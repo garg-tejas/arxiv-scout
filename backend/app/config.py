@@ -22,12 +22,10 @@ class Settings(BaseSettings):
     discovery_results_per_angle: int = 10
     discovery_shortlist_size: int = 12
     analysis_paper_cap: int = 8
-    glm_base_url: str = "https://api.z.ai/api/paas/v4/"
-    glm_api_key: str | None = None
-    glm_model: str = "glm-4.7-flash"
-    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    gemini_api_key: str | None = None
-    gemini_model: str = "gemini-flash-latest"
+    hf_base_url: str = "https://router.huggingface.co/v1"
+    hf_api_key: str | None = None
+    hf_primary_model: str = "openai/gpt-oss-120b:novita"
+    hf_secondary_model: str = "Qwen/Qwen3.5-9B:together"
     llm_timeout_seconds: float = 45.0
     llm_max_retries: int = 2
     langsmith_tracing: bool = False
