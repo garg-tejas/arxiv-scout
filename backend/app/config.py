@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     semantic_scholar_max_retries: int = 3
     semantic_scholar_backoff_seconds: float = 1.5
     arxiv_api_url: str = "https://export.arxiv.org/api/query"
-    arxiv_min_interval_seconds: float = 1.1
+    arxiv_min_interval_seconds: float = 3.0
     arxiv_max_retries: int = 3
     arxiv_backoff_seconds: float = 1.5
     firecrawl_base_url: str = "https://api.firecrawl.dev"

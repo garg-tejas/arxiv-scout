@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 
 import httpx
@@ -13,18 +14,17 @@ ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
 logger = logging.getLogger(__name__)
 
 
-class _MinimumIntervalRateLimiter:
-    """Ensures a minimum delay between outbound requests."""
+class _ArxivRequestGate:
+    """Serialize arXiv calls and enforce minimum spacing between requests."""
 
     def __init__(self, min_interval_seconds: float) -> None:
         self._min_interval_seconds = max(min_interval_seconds, 0.0)
         self._last_call_started_at = 0.0
         self._lock = asyncio.Lock()
 
-    async def acquire(self) -> None:
-        if self._min_interval_seconds <= 0:
-            return
-
+    async def run(
+        self, operation: Callable[[], Awaitable[httpx.Response]]
+    ) -> httpx.Response:
         async with self._lock:
             now = time.monotonic()
             elapsed = now - self._last_call_started_at
@@ -32,6 +32,7 @@ class _MinimumIntervalRateLimiter:
             if sleep_for > 0:
                 await asyncio.sleep(sleep_for)
             self._last_call_started_at = time.monotonic()
+            return await operation()
 
 
 class ArxivClient:
@@ -39,7 +40,7 @@ class ArxivClient:
         self,
         *,
         api_url: str,
-        min_interval_seconds: float = 1.1,
+        min_interval_seconds: float = 3.0,
         max_retries: int = 3,
         backoff_seconds: float = 1.5,
     ) -> None:
@@ -47,7 +48,7 @@ class ArxivClient:
         self.max_retries = max(max_retries, 0)
         self.backoff_seconds = max(backoff_seconds, 0.1)
         self._client = httpx.AsyncClient(timeout=20.0)
-        self._rate_limiter = _MinimumIntervalRateLimiter(
+        self._request_gate = _ArxivRequestGate(
             min_interval_seconds=min_interval_seconds
         )
 
@@ -86,8 +87,9 @@ class ArxivClient:
         params: dict[str, str],
     ) -> httpx.Response:
         for attempt in range(self.max_retries + 1):
-            await self._rate_limiter.acquire()
-            response = await self._client.get(self.api_url, params=params)
+            response = await self._request_gate.run(
+                lambda: self._client.get(self.api_url, params=params)
+            )
 
             if response.status_code != 429:
                 response.raise_for_status()
