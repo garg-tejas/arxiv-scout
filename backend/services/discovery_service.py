@@ -9,6 +9,9 @@ from models.discovery import CurationBatchResult, SteeringPreferences
 from models.enums import LLMRole
 from models.papers import Author, CuratedPaper, MethodExtractionRow, PaperMetadata
 from models.session import SearchInterpretation
+from prompts.curation import CURATION_AGENT_SYSTEM_PROMPT, build_curation_user_prompt
+from prompts.search import SEARCH_AGENT_SYSTEM_PROMPT, build_search_user_prompt
+from prompts.steering import STEERING_AGENT_SYSTEM_PROMPT, build_steering_user_prompt
 
 
 class DiscoveryService:
@@ -31,20 +34,8 @@ class DiscoveryService:
         normalized_topic = " ".join(topic.split()).strip()
         interpretation = await self.llm_router.generate_structured(
             role=LLMRole.SEARCH,
-            system_prompt=(
-                "You are the Search Agent for an arXiv literature scout. "
-                "Interpret the user's research topic into a normalized topic string and 3 to 4 semantically distinct "
-                "search angles. Return JSON only. Keep search angles concise, diverse, and arXiv-paper oriented."
-            ),
-            user_prompt=(
-                f"User topic:\n{normalized_topic}\n\n"
-                "Requirements:\n"
-                "- normalized_topic should be a cleaned-up restatement of the topic\n"
-                "- search_angles must contain 3 or 4 distinct strings\n"
-                "- angles should emphasize different retrieval views such as method family, benchmark/evaluation, "
-                "application area, or limitations/tradeoffs\n"
-                "- do not include numbering or commentary"
-            ),
+            system_prompt=SEARCH_AGENT_SYSTEM_PROMPT,
+            user_prompt=build_search_user_prompt(normalized_topic),
             schema_type=SearchInterpretation,
         )
         return self._finalize_interpretation(interpretation)
@@ -88,28 +79,11 @@ class DiscoveryService:
         if not normalized_nudge:
             raise ValueError("Nudge text cannot be empty.")
 
+        current_json = json.dumps(current.model_dump(mode="json"), indent=2)
         merged = await self.llm_router.generate_structured(
             role=LLMRole.STEERING,
-            system_prompt=(
-                "You are the Steering Agent for an arXiv literature scout. "
-                "Update the user's discovery preferences using the latest nudge and the existing preference state. "
-                "Return JSON only."
-            ),
-            user_prompt=(
-                "Current steering preferences:\n"
-                f"{json.dumps(current.model_dump(mode='json'), indent=2)}\n\n"
-                "Latest user nudge:\n"
-                f"{normalized_nudge}\n\n"
-                "Rules:\n"
-                "- return the full merged preference state\n"
-                "- include contains positive hard constraints or things to include\n"
-                "- exclude contains things to avoid or skip\n"
-                "- emphasize contains soft-focus or prioritization signals\n"
-                "- keep entries as short normalized phrases\n"
-                "- deduplicate entries\n"
-                "- if the latest nudge makes a phrase clearly negative, keep it only in exclude\n"
-                "- if the latest nudge makes a phrase clearly positive, keep it only in include or emphasize"
-            ),
+            system_prompt=STEERING_AGENT_SYSTEM_PROMPT,
+            user_prompt=build_steering_user_prompt(current_json, normalized_nudge),
             schema_type=SteeringPreferences,
         )
         return self._normalize_preferences(merged)
@@ -216,22 +190,9 @@ class DiscoveryService:
         }
         batch = await self.llm_router.generate_structured(
             role=LLMRole.CURATION,
-            system_prompt=(
-                "You are the Curation Agent for an arXiv literature scout. "
-                "Given a topic, steering preferences, and a batch of arXiv paper candidates, "
-                "return the most relevant shortlist in one batch. Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(prompt_payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- select at most shortlist_size papers\n"
-                "- use only the provided paper_id values\n"
-                "- exclude obvious mismatches\n"
-                "- assign score between 0.0 and 1.0\n"
-                "- rationale should be one concise sentence\n"
-                "- infer model_type, dataset, metrics, and benchmarks from title/abstract only\n"
-                "- prioritize relevance to the original topic and steering preferences over raw citation count\n"
-                "- treat this as one batched shortlist decision, not independent per-paper reviews"
+            system_prompt=CURATION_AGENT_SYSTEM_PROMPT,
+            user_prompt=build_curation_user_prompt(
+                json.dumps(prompt_payload, indent=2)
             ),
             schema_type=CurationBatchResult,
         )

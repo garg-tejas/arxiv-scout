@@ -19,6 +19,18 @@ from models.survey import (
     ThemeCluster,
     ThemeClusterBatch,
 )
+from prompts.survey import (
+    SECTION_REVIEWER_SYSTEM_PROMPT,
+    SECTION_WRITER_SYSTEM_PROMPT,
+    SURVEY_ASSEMBLER_SYSTEM_PROMPT,
+    SURVEY_ORCHESTRATOR_SYSTEM_PROMPT,
+    THEMATIC_CLUSTERING_SYSTEM_PROMPT,
+    build_section_reviewer_user_prompt,
+    build_section_writer_user_prompt,
+    build_survey_assembler_user_prompt,
+    build_survey_orchestrator_user_prompt,
+    build_thematic_clustering_user_prompt,
+)
 
 
 class SurveyService:
@@ -49,18 +61,9 @@ class SurveyService:
         }
         brief = await self.llm_router.generate_structured(
             role=LLMRole.SURVEY_ORCHESTRATOR,
-            system_prompt=(
-                "You are the Survey Orchestrator Agent for an arXiv literature scout. "
-                "Synthesize a concise survey brief from the session context. Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- angle should state the survey angle clearly\n"
-                "- audience should be a short target-reader description\n"
-                "- emphasis should contain 1 to 4 short focus points\n"
-                "- comparisons should contain 1 to 4 specific comparisons or lineages to emphasize\n"
-                "- keep fields concise and grounded in the provided context"
+            system_prompt=SURVEY_ORCHESTRATOR_SYSTEM_PROMPT,
+            user_prompt=build_survey_orchestrator_user_prompt(
+                json.dumps(payload, indent=2)
             ),
             schema_type=SurveyBrief,
         )
@@ -110,20 +113,9 @@ class SurveyService:
         }
         batch = await self.llm_router.generate_structured(
             role=LLMRole.THEMATIC_CLUSTERING,
-            system_prompt=(
-                "You are the Thematic Clustering Agent for an arXiv literature scout. "
-                "Group papers into coherent survey themes using the structured analysis and citation context. "
-                "Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- assign every paper_id to exactly one cluster\n"
-                "- return between 1 and 6 clusters\n"
-                "- cluster_id must be stable, lowercase, and slug-like\n"
-                "- title should be concise and presentation-ready\n"
-                "- description should explain the common method or lineage in 1 to 2 sentences\n"
-                "- prefer thematic coherence plus citation relationship, not just lexical similarity"
+            system_prompt=THEMATIC_CLUSTERING_SYSTEM_PROMPT,
+            user_prompt=build_thematic_clustering_user_prompt(
+                json.dumps(payload, indent=2)
             ),
             schema_type=ThemeClusterBatch,
         )
@@ -155,21 +147,8 @@ class SurveyService:
         }
         draft = await self.llm_router.generate_structured(
             role=LLMRole.SECTION_WRITER,
-            system_prompt=(
-                "You are the Section Writer Agent for an arXiv literature scout. "
-                "Write one survey section from structured paper analyses only. Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- content_markdown must be valid markdown\n"
-                "- include these headings in order: '## <title>', '### Theme Overview', '### Approach Comparison', "
-                "'### Idea Progression', '### Open Problems'\n"
-                "- compare approaches across papers rather than summarizing each in isolation\n"
-                "- use the citation/lineage context when available\n"
-                "- mention open problems grounded in the provided limitations and evaluation gaps\n"
-                "- if revision_feedback is present, address it directly"
-            ),
+            system_prompt=SECTION_WRITER_SYSTEM_PROMPT,
+            user_prompt=build_section_writer_user_prompt(json.dumps(payload, indent=2)),
             schema_type=SurveySectionDraft,
             provider_override=None,
         )
@@ -205,17 +184,9 @@ class SurveyService:
         }
         review = await self.llm_router.generate_structured(
             role=LLMRole.SECTION_REVIEWER,
-            system_prompt=(
-                "You are the Section Reviewer Agent for an arXiv literature scout. "
-                "Review a drafted survey section against the survey brief and cluster intent. Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- verdict must be ACCEPT or REVISE\n"
-                "- REVISE only when the section materially misses comparison depth, lineage clarity, or open problems\n"
-                "- feedback should be one concise paragraph the writer can act on immediately\n"
-                "- keep revision_count unchanged; it will be set by the caller"
+            system_prompt=SECTION_REVIEWER_SYSTEM_PROMPT,
+            user_prompt=build_section_reviewer_user_prompt(
+                json.dumps(payload, indent=2)
             ),
             schema_type=SectionReviewResult,
         )
@@ -250,16 +221,9 @@ class SurveyService:
         }
         draft = await self.llm_router.generate_structured(
             role=LLMRole.SURVEY_ASSEMBLER,
-            system_prompt=(
-                "You are the Survey Assembler Agent for an arXiv literature scout. "
-                "Write the introduction and conclusion for a structured survey. Return JSON only."
-            ),
-            user_prompt=(
-                f"{json.dumps(payload, indent=2)}\n\n"
-                "Rules:\n"
-                "- introduction should orient the reader to the survey angle and comparison priorities\n"
-                "- conclusion should synthesize the main tradeoffs, progressions, and open directions\n"
-                "- do not invent references or paper details beyond the provided context"
+            system_prompt=SURVEY_ASSEMBLER_SYSTEM_PROMPT,
+            user_prompt=build_survey_assembler_user_prompt(
+                json.dumps(payload, indent=2)
             ),
             schema_type=SurveyAssemblyDraft,
         )
@@ -377,13 +341,14 @@ class SurveyService:
         cluster_ids: list[str], papers: list[CuratedPaper]
     ) -> list[str]:
         paper_map = {paper.paper_id: paper for paper in papers}
-        return sorted(
-            cluster_ids,
-            key=lambda paper_id: (
-                paper_map.get(paper_id).year or 0 if paper_map.get(paper_id) else 0,
-                paper_map.get(paper_id).title if paper_map.get(paper_id) else paper_id,
-            ),
-        )
+
+        def sort_key(paper_id: str) -> tuple[int, str]:
+            paper = paper_map.get(paper_id)
+            if paper is None:
+                return (0, paper_id)
+            return (paper.year or 0, paper.title)
+
+        return sorted(cluster_ids, key=sort_key)
 
     @staticmethod
     def _build_cluster_paper_payload(
@@ -453,16 +418,10 @@ class SurveyService:
                 CitationEdgeType.SHARED_FOUNDATION,
             }:
                 continue
-            source_title = (
-                paper_map.get(edge.source).title
-                if paper_map.get(edge.source)
-                else edge.source
-            )
-            target_title = (
-                paper_map.get(edge.target).title
-                if paper_map.get(edge.target)
-                else edge.target
-            )
+            source_paper = paper_map.get(edge.source)
+            target_paper = paper_map.get(edge.target)
+            source_title = source_paper.title if source_paper else edge.source
+            target_title = target_paper.title if target_paper else edge.target
             lines.append(
                 f"{source_title} {edge.relation.value.replace('_', ' ')} {target_title} ({edge.evidence_level.value} evidence)."
             )

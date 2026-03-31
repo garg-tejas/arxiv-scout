@@ -7,8 +7,19 @@ from integrations.llm import LLMRouter
 from models.analysis import PaperAnalysis
 from models.enums import AnalysisQuality, LLMRole
 from models.papers import CuratedPaper
+from prompts.analysis import (
+    PAPER_ANALYZER_SYSTEM_PROMPT,
+    build_paper_analyzer_user_prompt,
+)
 
-SECTION_HINTS = ("abstract", "introduction", "method", "approach", "results", "conclusion")
+SECTION_HINTS = (
+    "abstract",
+    "introduction",
+    "method",
+    "approach",
+    "results",
+    "conclusion",
+)
 
 
 class AnalysisService:
@@ -27,28 +38,21 @@ class AnalysisService:
             full_text = await self._fetch_full_text(paper.arxiv_id)
 
         quality = self._classify_quality(full_text)
-        source_text = full_text if quality == AnalysisQuality.FULL_TEXT else self._fallback_text(paper)
+        source_text: str = (
+            full_text
+            if full_text and quality == AnalysisQuality.FULL_TEXT
+            else self._fallback_text(paper)
+        )
         truncated_text = self._truncate(source_text)
 
+        paper_metadata_json = json.dumps(self._build_paper_metadata(paper), indent=2)
         analysis = await self.llm_router.generate_structured(
             role=LLMRole.PAPER_ANALYZER,
-            system_prompt=(
-                "You are the Paper Analyzer Agent for an arXiv literature scout. "
-                "Read the provided paper content and extract a structured analysis. "
-                "Return JSON only. Use only the provided content. Do not invent details."
-            ),
-            user_prompt=(
-                f"Paper metadata:\n{json.dumps(self._build_paper_metadata(paper), indent=2)}\n\n"
-                f"Analysis quality mode: {quality.value}\n\n"
-                "Paper content:\n"
-                f"{truncated_text}\n\n"
-                "Extraction rules:\n"
-                "- core_claim should be one concise sentence if identifiable\n"
-                "- methodology should contain 1 to 4 concise bullet-like statements as plain strings\n"
-                "- datasets, metrics, and benchmarks should contain only explicitly supported items\n"
-                "- limitations should contain explicit limitations or caveats when present\n"
-                "- explicit_citations should contain cited paper names, citation keys, or numbered references only if they are explicit in the text\n"
-                "- if a field is not supported by the content, return an empty list or null as appropriate"
+            system_prompt=PAPER_ANALYZER_SYSTEM_PROMPT,
+            user_prompt=build_paper_analyzer_user_prompt(
+                paper_metadata_json=paper_metadata_json,
+                quality=quality.value,
+                truncated_text=truncated_text,
             ),
             schema_type=PaperAnalysis,
         )
@@ -59,7 +63,9 @@ class AnalysisService:
         analysis.metrics = self._normalize_strings(analysis.metrics)
         analysis.benchmarks = self._normalize_strings(analysis.benchmarks)
         analysis.limitations = self._normalize_strings(analysis.limitations, limit=4)
-        analysis.explicit_citations = self._normalize_strings(analysis.explicit_citations, limit=20)
+        analysis.explicit_citations = self._normalize_strings(
+            analysis.explicit_citations, limit=20
+        )
         if analysis.core_claim:
             analysis.core_claim = " ".join(analysis.core_claim.split()).strip()
         return analysis
@@ -70,7 +76,9 @@ class AnalysisService:
         if not payload:
             return None
 
-        markdown = payload.get("markdown") or payload.get("content") or payload.get("text")
+        markdown = (
+            payload.get("markdown") or payload.get("content") or payload.get("text")
+        )
         if isinstance(markdown, str):
             return markdown.strip()
         return None
