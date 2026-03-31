@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     )
     semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1"
     semantic_scholar_api_key: str | None = None
+    semantic_scholar_min_interval_seconds: float = 1.1
+    semantic_scholar_max_retries: int = 3
+    semantic_scholar_backoff_seconds: float = 1.5
     arxiv_api_url: str = "https://export.arxiv.org/api/query"
     firecrawl_base_url: str = "https://api.firecrawl.dev"
     firecrawl_api_key: str | None = None
