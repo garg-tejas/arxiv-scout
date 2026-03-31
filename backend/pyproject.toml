@@ -21,3 +21,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app", "graph", "integrations", "models", "persistence", "services"]
+
+[dependency-groups]
+dev = [
+    "cairosvg>=2.9.0",
+]

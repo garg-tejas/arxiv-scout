@@ -1,0 +1,21 @@
+{
+  "name": "ArXiv Literature Scout",
+  "short_name": "ArXiv Scout",
+  "description": "AI-powered literature discovery and survey generation for arXiv papers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9f5ef",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
