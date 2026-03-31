@@ -59,7 +59,12 @@ async def lifespan(app: FastAPI):
         max_retries=settings.semantic_scholar_max_retries,
         backoff_seconds=settings.semantic_scholar_backoff_seconds,
     )
-    arxiv_client = ArxivClient(api_url=settings.arxiv_api_url)
+    arxiv_client = ArxivClient(
+        api_url=settings.arxiv_api_url,
+        min_interval_seconds=settings.arxiv_min_interval_seconds,
+        max_retries=settings.arxiv_max_retries,
+        backoff_seconds=settings.arxiv_backoff_seconds,
+    )
     firecrawl_client = FirecrawlClient(
         base_url=settings.firecrawl_base_url,
         api_key=settings.firecrawl_api_key,

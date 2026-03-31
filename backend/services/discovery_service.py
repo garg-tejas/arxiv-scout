@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from integrations.arxiv import ArxivClient
 from integrations.llm import LLMRouter
@@ -12,6 +13,8 @@ from models.session import SearchInterpretation
 from prompts.curation import CURATION_AGENT_SYSTEM_PROMPT, build_curation_user_prompt
 from prompts.search import SEARCH_AGENT_SYSTEM_PROMPT, build_search_user_prompt
 from prompts.steering import STEERING_AGENT_SYSTEM_PROMPT, build_steering_user_prompt
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryService:
@@ -136,7 +139,15 @@ class DiscoveryService:
         if arxiv_id is None:
             return None
 
-        enriched = await self.arxiv_client.resolve_metadata(arxiv_id)
+        enriched: dict | None = None
+        try:
+            enriched = await self.arxiv_client.resolve_metadata(arxiv_id)
+        except Exception as exc:
+            logger.warning(
+                "arXiv enrichment failed for %s; using Semantic Scholar metadata fallback: %s",
+                arxiv_id,
+                exc,
+            )
         authors = candidate.get("authors") or []
         author_models = [
             Author(name=author.get("name", "Unknown")) for author in authors
